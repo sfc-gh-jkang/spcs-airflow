@@ -1,0 +1,40 @@
+spec:
+  containers:
+    - name: scheduler
+      image: /airflow_db/airflow_schema/airflow_repository/airflow:3.1.7
+      env:
+        AIRFLOW_ROLE: scheduler
+        AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://airflow:{{secret.airflow_postgres_pwd.secret_string}}@af-postgres:5432/airflow"
+        AIRFLOW__CELERY__BROKER_URL: "redis://:{{secret.airflow_redis_pwd.secret_string}}@af-redis:6379/0"
+        AIRFLOW__CELERY__RESULT_BACKEND: "db+postgresql://airflow:{{secret.airflow_postgres_pwd.secret_string}}@af-postgres:5432/airflow"
+        AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+        AIRFLOW__CORE__FERNET_KEY: "{{secret.airflow_fernet_key.secret_string}}"
+        AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+        AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+        AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+        AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://af-api-server:8080/execution/"
+        AIRFLOW__API_AUTH__JWT_SECRET: "{{secret.airflow_jwt_secret.secret_string}}"
+        AIRFLOW__API__SECRET_KEY: "{{secret.airflow_jwt_secret.secret_string}}"
+      secrets:
+        - snowflakeSecret:
+            objectName: airflow_fernet_key
+        - snowflakeSecret:
+            objectName: airflow_postgres_pwd
+        - snowflakeSecret:
+            objectName: airflow_redis_pwd
+        - snowflakeSecret:
+            objectName: airflow_jwt_secret
+      volumeMounts:
+        - name: dags-volume
+          mountPath: /opt/airflow/dags
+        - name: logs-volume
+          mountPath: /opt/airflow/logs
+  volumes:
+    - name: dags-volume
+      source: "@airflow_db.airflow_schema.airflow_dags"
+      uid: 50000
+      gid: 0
+    - name: logs-volume
+      source: "@airflow_db.airflow_schema.airflow_logs"
+      uid: 50000
+      gid: 0

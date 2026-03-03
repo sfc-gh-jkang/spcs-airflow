@@ -1,0 +1,7 @@
+apache-airflow-providers-celery>=3.8.0
+apache-airflow-providers-postgres>=6.0.0
+apache-airflow-providers-redis>=3.8.0
+apache-airflow-providers-snowflake>=6.0.0
+celery[redis]>=5.5.0
+redis>=5.0.0
+psycopg2-binary>=2.9.9

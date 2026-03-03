@@ -1,0 +1,162 @@
+"""Snowflake ETL Pipeline — ingest, transform, validate using SPCS OAuth.
+
+Demonstrates a real end-to-end data pipeline on Snowflake via Airflow 3.x:
+  create_raw_table → ingest_raw_data → transform_to_summary → validate_results → cleanup_raw
+
+Uses the SPCS OAuth token at /snowflake/session/token for zero-config authentication.
+No Snowflake connection URI or credentials needed — runs natively inside SPCS.
+
+Schedule: manual trigger only (schedule=None).
+Self-contained: creates and cleans up its own tables.
+"""
+
+import os
+import pendulum
+from airflow.sdk import DAG, task
+
+SNOWFLAKE_DB = "AIRFLOW_DB"
+SNOWFLAKE_SCHEMA = "AIRFLOW_SCHEMA"
+SNOWFLAKE_WAREHOUSE = "AIRFLOW_SETUP_WH"
+
+
+def get_snowflake_connection():
+    """Create a Snowflake connection using the SPCS OAuth token.
+
+    Inside SPCS containers, Snowflake automatically provides:
+    - /snowflake/session/token: OAuth token (refreshed every few minutes)
+    - SNOWFLAKE_ACCOUNT env var: account identifier
+    - SNOWFLAKE_HOST env var: internal host for private connectivity
+    """
+    import snowflake.connector
+
+    with open("/snowflake/session/token", "r") as f:
+        token = f.read()
+
+    return snowflake.connector.connect(
+        host=os.getenv("SNOWFLAKE_HOST"),
+        account=os.getenv("SNOWFLAKE_ACCOUNT"),
+        token=token,
+        authenticator="oauth",
+        database=SNOWFLAKE_DB,
+        schema=SNOWFLAKE_SCHEMA,
+        warehouse=SNOWFLAKE_WAREHOUSE,
+    )
+
+
+def run_sql(sql: str, fetch: bool = False):
+    """Execute SQL via SPCS OAuth connection."""
+    conn = get_snowflake_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        if fetch:
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+with DAG(
+    dag_id="snowflake_etl_pipeline",
+    schedule=None,
+    start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
+    catchup=False,
+    is_paused_upon_creation=False,
+    tags=["etl", "snowflake", "spcs", "demo"],
+    doc_md="""
+    ## Snowflake ETL Pipeline
+    End-to-end demo: ingests sample sales data into a raw table,
+    transforms it into an aggregated summary, validates the output,
+    and cleans up.
+
+    Uses SPCS OAuth token — no Snowflake connection config required.
+    Trigger manually to see it run.
+    """,
+):
+
+    @task
+    def create_raw_table():
+        """Create the raw_sales staging table."""
+        run_sql("""
+            CREATE OR REPLACE TABLE raw_sales (
+                sale_id     INTEGER,
+                product     VARCHAR(50),
+                quantity    INTEGER,
+                unit_price  DECIMAL(10, 2),
+                sale_date   DATE
+            )
+        """)
+        return "raw_sales table created"
+
+    @task
+    def ingest_raw_data(status: str):
+        """Insert sample sales data into raw_sales."""
+        run_sql("""
+            INSERT INTO raw_sales (sale_id, product, quantity, unit_price, sale_date)
+            VALUES
+                (1,  'Laptop',      2,  999.99, '2026-01-15'),
+                (2,  'Mouse',      10,   29.99, '2026-01-16'),
+                (3,  'Keyboard',    5,   79.99, '2026-01-16'),
+                (4,  'Monitor',     3,  349.99, '2026-01-17'),
+                (5,  'Laptop',      1,  999.99, '2026-01-18'),
+                (6,  'Mouse',      15,   29.99, '2026-01-18'),
+                (7,  'Headphones',  8,   59.99, '2026-01-19'),
+                (8,  'Keyboard',    3,   79.99, '2026-01-20'),
+                (9,  'Monitor',     1,  349.99, '2026-01-21'),
+                (10, 'Headphones', 12,   59.99, '2026-01-22')
+        """)
+        rows = run_sql("SELECT COUNT(*) FROM raw_sales", fetch=True)
+        count = rows[0][0]
+        print(f"Ingested {count} rows into raw_sales")
+        return count
+
+    @task
+    def transform_to_summary(row_count: int):
+        """Aggregate raw sales into a product summary table."""
+        run_sql("""
+            CREATE OR REPLACE TABLE sales_summary AS
+            SELECT
+                product,
+                COUNT(*)                       AS num_transactions,
+                SUM(quantity)                  AS total_quantity,
+                SUM(quantity * unit_price)     AS total_revenue,
+                ROUND(AVG(unit_price), 2)      AS avg_unit_price
+            FROM raw_sales
+            GROUP BY product
+            ORDER BY total_revenue DESC
+        """)
+        results = run_sql("""
+            SELECT product, total_quantity, total_revenue
+            FROM sales_summary
+            ORDER BY total_revenue DESC
+        """, fetch=True)
+        for product, qty, revenue in results:
+            print(f"  {product}: {qty} units, ${revenue:,.2f} revenue")
+        return len(results)
+
+    @task
+    def validate_results(product_count: int):
+        """Validate the summary has expected data."""
+        rows = run_sql("""
+            SELECT
+                COUNT(*)           AS product_count,
+                SUM(total_revenue) AS grand_total
+            FROM sales_summary
+        """, fetch=True)
+        count, total = rows[0]
+        print(f"Products: {count}, Grand total revenue: ${total:,.2f}")
+        assert count == 5, f"Expected 5 products, got {count}"
+        assert total > 0, "Revenue should be positive"
+        return {"products": count, "grand_total": float(total)}
+
+    @task
+    def cleanup_raw(validation: dict):
+        """Drop the raw staging table (summary table kept for inspection)."""
+        run_sql("DROP TABLE IF EXISTS raw_sales")
+        print(f"Cleaned up raw_sales. Summary table retained with {validation['products']} products.")
+        return "done"
+
+    t1 = create_raw_table()
+    t2 = ingest_raw_data(t1)
+    t3 = transform_to_summary(t2)
+    t4 = validate_results(t3)
+    cleanup_raw(t4)

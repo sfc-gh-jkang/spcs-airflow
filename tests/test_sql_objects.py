@@ -1,0 +1,134 @@
+"""Tests for SQL setup scripts.
+
+Validates that:
+- All 10 SQL scripts exist in correct order
+- Scripts use idempotent patterns (CREATE OR REPLACE, IF NOT EXISTS, IF EXISTS)
+- Scripts don't contain hardcoded secrets
+- Scripts reference correct Snowflake object names
+"""
+
+import os
+import re
+import pytest
+
+SQL_DIR = os.path.join(os.path.dirname(__file__), "..", "sql")
+
+EXPECTED_SQL_FILES = [
+    "01_setup_database.sql",
+    "02_setup_stages.sql",
+    "03_setup_secrets.sql.template",
+    "04_setup_networking.sql",
+    "05_setup_compute_pools.sql",
+    "06_setup_image_repo.sql",
+    "07_create_services.sql",
+    "08_validate.sql",
+    "09_suspend_all.sql",
+    "10_resume_all.sql",
+]
+
+
+class TestSqlFilesExist:
+    """All 10 SQL setup scripts must exist."""
+
+    @pytest.mark.parametrize("filename", EXPECTED_SQL_FILES)
+    def test_sql_file_exists(self, filename):
+        path = os.path.join(SQL_DIR, filename)
+        assert os.path.isfile(path), f"Missing SQL script: {filename}"
+
+
+class TestSqlIdempotency:
+    """SQL scripts must use idempotent patterns."""
+
+    IDEMPOTENT_PATTERNS = [
+        r"CREATE\s+OR\s+REPLACE",
+        r"IF\s+NOT\s+EXISTS",
+        r"IF\s+EXISTS",
+    ]
+
+    @pytest.mark.parametrize("filename", EXPECTED_SQL_FILES)
+    def test_uses_idempotent_patterns(self, filename):
+        """DDL scripts (01-07) must use idempotent SQL patterns."""
+        if filename in ("08_validate.sql",):
+            pytest.skip("Validation script doesn't need idempotent DDL")
+        path = os.path.join(SQL_DIR, filename)
+        if not os.path.isfile(path):
+            pytest.skip(f"{filename} not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+
+        # Skip if file is only SELECT/SHOW/DESCRIBE statements (validation/status)
+        ddl_keywords = ["CREATE", "ALTER", "DROP", "GRANT"]
+        has_ddl = any(kw in content for kw in ddl_keywords)
+        if not has_ddl:
+            return  # No DDL to check
+
+        has_idempotent = any(
+            re.search(pattern, content) for pattern in self.IDEMPOTENT_PATTERNS
+        )
+        assert has_idempotent, (
+            f"{filename}: DDL scripts must use idempotent patterns "
+            "(CREATE OR REPLACE, IF NOT EXISTS, IF EXISTS)"
+        )
+
+
+class TestSqlSecurity:
+    """SQL scripts must not contain hardcoded secrets."""
+
+    FORBIDDEN_PATTERNS = [
+        # Literal password values (not variable references)
+        r"PASSWORD\s*=\s*'[^'{$][^']*'",
+        r"SECRET_STRING\s*=\s*'[^']*'",
+    ]
+
+    @pytest.mark.parametrize("filename", EXPECTED_SQL_FILES)
+    def test_no_hardcoded_secrets(self, filename):
+        path = os.path.join(SQL_DIR, filename)
+        if not os.path.isfile(path):
+            pytest.skip(f"{filename} not yet created")
+        with open(path) as f:
+            content = f.read()
+
+        # Filter out comment lines
+        non_comment_lines = [
+            line
+            for line in content.splitlines()
+            if not line.strip().startswith("--")
+        ]
+        non_comment_content = "\n".join(non_comment_lines)
+
+        for pattern in self.FORBIDDEN_PATTERNS:
+            matches = re.findall(pattern, non_comment_content, re.IGNORECASE)
+            # Allow placeholder patterns like 'CHANGE_ME' or '<your_password>'
+            real_matches = [
+                m for m in matches
+                if "CHANGE_ME" not in m.upper()
+                and "<" not in m
+                and "REPLACE" not in m.upper()
+            ]
+            assert len(real_matches) == 0, (
+                f"{filename}: possible hardcoded secret found: {real_matches}"
+            )
+
+
+class TestSqlObjectNames:
+    """SQL scripts must reference the correct Snowflake object names."""
+
+    EXPECTED_OBJECTS = {
+        "AIRFLOW_DB": ["01_setup_database.sql"],
+        "AIRFLOW_SCHEMA": ["01_setup_database.sql"],
+        "AIRFLOW_REPOSITORY": ["06_setup_image_repo.sql"],
+    }
+
+    @pytest.mark.parametrize(
+        "object_name,expected_files", list(EXPECTED_OBJECTS.items())
+    )
+    def test_object_referenced(self, object_name, expected_files):
+        for filename in expected_files:
+            path = os.path.join(SQL_DIR, filename)
+            if not os.path.isfile(path):
+                pytest.skip(f"{filename} not yet created")
+            with open(path) as f:
+                content = f.read().upper()
+            assert object_name in content, (
+                f"{filename}: must reference {object_name}"
+            )

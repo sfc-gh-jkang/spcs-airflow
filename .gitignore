@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Environment
+.env
+.env.*
+!.env.example
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal dev tooling
+.claude/
+.specify/
+
+# Secrets - never commit real secret values
+simple_auth_manager_passwords.json.generated
+sql/03_setup_secrets.sql

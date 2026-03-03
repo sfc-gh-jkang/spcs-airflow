@@ -1,0 +1,16 @@
+spec:
+  containers:
+    - name: redis
+      image: /airflow_db/airflow_schema/airflow_repository/airflow-redis:7.4
+      env:
+        REDIS_PASSWORD: "{{secret.airflow_redis_pwd.secret_string}}"
+      command:
+        - sh
+        - -c
+        - 'redis-server --protected-mode no --requirepass "$REDIS_PASSWORD"'
+      secrets:
+        - snowflakeSecret:
+            objectName: airflow_redis_pwd
+  endpoints:
+    - name: redis
+      port: 6379
