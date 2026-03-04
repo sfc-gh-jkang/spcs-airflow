@@ -18,6 +18,7 @@ EXPECTED_SCRIPTS = [
     "build_and_push.sh",
     "deploy.sh",
     "generate_secrets.sh",
+    "sync_dags.sh",
     "teardown.sh",
 ]
 
@@ -181,3 +182,95 @@ class TestDeploy:
             content = f.read()
         assert "*.yaml" in content, "deploy.sh: must upload *.yaml specs"
         assert "*.py" in content, "deploy.sh: must upload *.py DAGs"
+
+
+class TestSyncDags:
+    """sync_dags.sh must handle DAG uploads to the AIRFLOW_DAGS stage."""
+
+    def test_references_airflow_dags_stage(self):
+        path = os.path.join(SCRIPTS_DIR, "sync_dags.sh")
+        if not os.path.isfile(path):
+            pytest.skip("sync_dags.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "AIRFLOW_DAGS" in content, (
+            "sync_dags.sh: must reference the AIRFLOW_DAGS stage"
+        )
+
+    def test_supports_connection_flag(self):
+        path = os.path.join(SCRIPTS_DIR, "sync_dags.sh")
+        if not os.path.isfile(path):
+            pytest.skip("sync_dags.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "--connection" in content, (
+            "sync_dags.sh: must support --connection flag"
+        )
+
+    def test_uses_put_command(self):
+        path = os.path.join(SCRIPTS_DIR, "sync_dags.sh")
+        if not os.path.isfile(path):
+            pytest.skip("sync_dags.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "PUT" in content, (
+            "sync_dags.sh: must use PUT to upload DAG files"
+        )
+        assert "OVERWRITE=TRUE" in content, (
+            "sync_dags.sh: must use OVERWRITE=TRUE for idempotent uploads"
+        )
+        assert "AUTO_COMPRESS=FALSE" in content, (
+            "sync_dags.sh: must disable auto-compression for .py files"
+        )
+
+    def test_defaults_to_all_dags(self):
+        path = os.path.join(SCRIPTS_DIR, "sync_dags.sh")
+        if not os.path.isfile(path):
+            pytest.skip("sync_dags.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "*.py" in content, (
+            "sync_dags.sh: must default to syncing all *.py files when no args given"
+        )
+
+    def test_supports_individual_files(self):
+        """sync_dags.sh should accept individual filenames as arguments."""
+        path = os.path.join(SCRIPTS_DIR, "sync_dags.sh")
+        if not os.path.isfile(path):
+            pytest.skip("sync_dags.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        # Should have logic to accept positional args (file names)
+        assert "FILES" in content or "files" in content, (
+            "sync_dags.sh: must support individual file arguments"
+        )
+
+    def test_uploads_subdirectories(self):
+        """sync_dags.sh must upload subdirectories (e.g., utils/) to preserve Python packages."""
+        path = os.path.join(SCRIPTS_DIR, "sync_dags.sh")
+        if not os.path.isfile(path):
+            pytest.skip("sync_dags.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "__pycache__" in content, (
+            "sync_dags.sh: must skip __pycache__ directories"
+        )
+        # Must iterate over subdirectories
+        assert "subdir" in content or "SUBDIR" in content, (
+            "sync_dags.sh: must handle subdirectory uploads for Python packages"
+        )
+
+
+class TestDeploySubdirs:
+    """deploy.sh must upload DAG subdirectories (e.g., utils/) to preserve Python packages."""
+
+    def test_uploads_dag_subdirectories(self):
+        path = os.path.join(SCRIPTS_DIR, "deploy.sh")
+        with open(path) as f:
+            content = f.read()
+        assert "__pycache__" in content, (
+            "deploy.sh: must skip __pycache__ when uploading DAG subdirectories"
+        )
+        assert "AIRFLOW_DAGS/" in content, (
+            "deploy.sh: must upload to stage subdirectories (AIRFLOW_DAGS/<subdir>)"
+        )

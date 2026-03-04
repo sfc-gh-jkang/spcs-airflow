@@ -1,40 +1,19 @@
-"""Example Snowflake queries using SPCS OAuth — zero-config authentication.
+"""Example Snowflake queries — works on SPCS (OAuth) and locally (env vars).
 
 Demonstrates:
-- SPCS OAuth token at /snowflake/session/token
+- Auto-detecting SPCS vs local environment
 - Airflow 3.x TaskFlow API with @task decorator
-- No Snowflake connection URI or credentials needed
+- Shared connection helper from utils.snowflake_conn
 """
 
 import logging
-import os
 
 import pendulum
 from airflow.sdk import DAG, task
 
+from utils.snowflake_conn import get_snowflake_connection
+
 logger = logging.getLogger(__name__)
-
-
-def get_snowflake_connection():
-    """Create a Snowflake connection using the SPCS OAuth token."""
-    import snowflake.connector
-
-    host = os.getenv("SNOWFLAKE_HOST")
-    account = os.getenv("SNOWFLAKE_ACCOUNT")
-    if not host or not account:
-        raise RuntimeError(
-            "SNOWFLAKE_HOST and SNOWFLAKE_ACCOUNT must be set (provided automatically inside SPCS)"
-        )
-
-    with open("/snowflake/session/token", "r") as f:
-        token = f.read()
-
-    return snowflake.connector.connect(
-        host=host,
-        account=account,
-        token=token,
-        authenticator="oauth",
-    )
 
 
 with DAG(
@@ -46,8 +25,8 @@ with DAG(
     tags=["example", "snowflake", "spcs"],
     doc_md="""
     ## Example Snowflake DAG
-    Runs simple queries against Snowflake using the SPCS OAuth token.
-    No connection configuration required — works automatically inside SPCS.
+    Runs simple queries against Snowflake.
+    Auto-detects SPCS OAuth vs local env var credentials.
     """,
 ):
 

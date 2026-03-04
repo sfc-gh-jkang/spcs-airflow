@@ -47,7 +47,7 @@ All SQL scripts and deploy scripts must be safely re-runnable. Use `CREATE OR RE
 - **Executor**: CeleryExecutor (Redis broker + PostgreSQL backend)
 - **Images**: Must be `--platform linux/amd64`
 - **Storage**: Snowflake stages with `SNOWFLAKE_SSE` encryption for DAGs, logs, specs
-- **DAG Sync**: SnowGIT integration with git-sync sidecar containers
+- **DAG Sync**: Snowflake stage (`@AIRFLOW_DAGS`) + `sync_dags.sh` upload script
 
 ## Development Workflow
 

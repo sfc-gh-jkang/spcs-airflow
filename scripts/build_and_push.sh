@@ -56,7 +56,7 @@ else
     echo "  $0 <REPO_URL>"
     echo ""
     echo "Examples:"
-    echo "  $0 --connection aws_spcs"
+    echo "  $0 --connection my_connection"
     echo "  $0 orgname-acctname.registry.snowflakecomputing.com/airflow_db/airflow_schema/airflow_repository"
     exit 1
 fi

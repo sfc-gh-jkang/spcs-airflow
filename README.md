@@ -117,9 +117,13 @@ See `images/airflow/pyproject.toml` for the full list.
 ```
 airflow-spcs-v3/
 ├── dags/                       # Airflow DAG definitions
+│   ├── utils/                  # Shared utilities for DAGs
+│   │   ├── __init__.py
+│   │   └── snowflake_conn.py   # Snowflake connection helper (SPCS/local auto-detect)
 │   ├── example_taskflow.py     # TaskFlow API example (extract→transform→load)
 │   ├── example_snowflake.py    # Snowflake connectivity demo (SPCS OAuth)
-│   └── snowflake_etl_pipeline.py # End-to-end ETL: ingest→transform→validate
+│   ├── snowflake_etl_pipeline.py # End-to-end ETL: ingest→transform→validate
+│   └── e2e_snowflake_objects.py  # E2E test DAG: creates real Snowflake tables
 ├── images/                     # Docker images
 │   ├── airflow/
 │   │   ├── Dockerfile          # Based on apache/airflow:3.1.7
@@ -148,19 +152,36 @@ airflow-spcs-v3/
 │   ├── 08_validate.sql
 │   ├── 09_suspend_all.sql
 │   └── 10_resume_all.sql
-├── tests/                      # TDD test suite (pytest)
+├── tests/                      # TDD test suite — 542 tests (531 offline + 5 local + 6 E2E)
+│   ├── conftest.py             # Shared fixtures and pytest markers
 │   ├── test_spec_schemas.py    # SPCS spec structure validation
 │   ├── test_service_connectivity.py  # Inter-service dependency checks
 │   ├── test_env_config.py      # Environment variable validation
 │   ├── test_docker_builds.py   # Dockerfile correctness
 │   ├── test_dag_syntax.py      # DAG file validation
-│   └── test_sql_objects.py     # SQL script validation
+│   ├── test_sql_objects.py     # SQL script validation
+│   ├── test_cross_file_consistency.py  # Spec↔SQL refs, pool assignments, versions
+│   ├── test_entrypoint.py      # Role handling, db-migrate, auth JSON
+│   ├── test_pyproject.py       # UV structure, deps, version pins
+│   ├── test_shell_scripts.py   # Script structure, security, refs
+│   ├── test_sync_dags_behavior.py  # Upload behavior, subdirs, pycache exclusion
+│   ├── test_snowflake_conn.py  # Shared connection helper tests
+│   ├── test_readme_accuracy.py # README refs files that exist, documents all features
+│   ├── test_ci_config.py       # GitLab CI, .gitignore
+│   ├── test_compose_config.py  # Docker-compose ↔ SPCS env var parity
+│   ├── test_multi_container_consistency.py  # Cross-spec value consistency
+│   ├── test_infrastructure_consistency.py   # Infra-layer consistency (secrets, images, ports)
+│   ├── test_local_compose.py   # Local integration tests (docker-compose + REST API)
+│   └── test_e2e_spcs.py        # End-to-end tests (live SPCS cluster)
 ├── scripts/                    # Build/deploy automation
 │   ├── build_and_push.sh       # Build and push Docker images to SPCS
 │   ├── deploy.sh               # Full deployment pipeline
 │   ├── generate_secrets.sh     # Auto-generate secrets SQL (Fernet, passwords, JWT)
+│   ├── sync_dags.sh            # Hot-reload DAGs to running cluster (no restart)
 │   └── teardown.sh             # Tear down all services and resources
-├── .env.example                # Template for local config overrides
+├── docker-compose.yaml         # Local dev stack (LocalExecutor, bind-mount DAGs)
+├── pytest.ini                  # Default marker exclusion (bare pytest = offline only)
+├── .env.example                # Template for local Snowflake credentials
 ├── .gitignore
 ├── LICENSE                     # Apache 2.0
 ├── SPECIFICATION.md
@@ -204,18 +225,139 @@ All Airflow services share these critical environment variables:
 12. **`DROP SERVICE` with block storage**: Services using `blockStorage` volumes require `DROP SERVICE ... FORCE` or `snapshotOnDelete=true` in the spec.
 13. **Log symlinks crash on GCP stage mounts**: Airflow tries to symlink "latest" log directories. GCP stage mounts reject symlinks (`Errno 95`). Set `AIRFLOW__SCHEDULER__SYMLINK_LATEST_LOG=False` on all services, and don't mount the logs stage on the dag_processor (it only needs dags).
 
-## Snowflake Connection (SPCS OAuth)
+## Snowflake Connection (SPCS OAuth + Local)
 
-DAGs connect to Snowflake using the **SPCS native OAuth token** — no connection URI, passwords, or secrets needed.
+DAGs connect to Snowflake using a **shared connection helper** (`dags/utils/snowflake_conn.py`) that auto-detects the environment:
 
-Inside every SPCS container, Snowflake automatically provides:
-- `/snowflake/session/token` — OAuth token file (auto-refreshed every few minutes)
-- `SNOWFLAKE_ACCOUNT` env var — account identifier
-- `SNOWFLAKE_HOST` env var — internal host for private connectivity
+- **On SPCS**: Uses the native OAuth token from `/snowflake/session/token` — no passwords or secrets needed
+- **Locally**: Uses `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD` env vars from `.env`
 
-DAGs use `snowflake.connector.connect()` with `authenticator="oauth"` and the token from the file. See `dags/snowflake_etl_pipeline.py` for the pattern.
+```python
+from utils.snowflake_conn import get_snowflake_connection, run_sql
 
-> **Note**: Snowflake DAGs only work when running inside SPCS. For local development, mock or stub the connection.
+conn = get_snowflake_connection()                    # auto-detects SPCS vs local
+conn = get_snowflake_connection(database="MY_DB")    # kwargs override defaults
+results = run_sql("SELECT CURRENT_VERSION()", fetch=True)
+```
+
+> **Note**: The `example_taskflow` DAG works without any Snowflake connection. The `example_snowflake` and `snowflake_etl_pipeline` DAGs require either SPCS or local Snowflake credentials.
+
+## Local Development & DAG Deployment
+
+DAGs are deployed via a Snowflake internal stage (`AIRFLOW_DAGS`) that is mounted into all Airflow containers at `/opt/airflow/dags`. **No service restart or image rebuild is needed** — upload the file and the dag-processor picks it up automatically.
+
+### Quick sync (recommended)
+
+```bash
+# Sync all DAGs from dags/ to the running cluster
+bash scripts/sync_dags.sh --connection <connection>
+
+# Sync a single file
+bash scripts/sync_dags.sh --connection <connection> my_new_dag.py
+
+# Sync specific files
+bash scripts/sync_dags.sh --connection <connection> dag_a.py dag_b.py
+```
+
+### Manual sync via Snow CLI
+
+```bash
+snow sql --connection <connection> -q \
+  "PUT file://$(pwd)/dags/my_dag.py @AIRFLOW_DB.AIRFLOW_SCHEMA.AIRFLOW_DAGS AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
+```
+
+### Development workflow
+
+```
+ ┌──────────────┐    PUT to stage     ┌────────────────┐    auto-sync     ┌─────────────┐
+ │ Local editor  │ ──────────────────> │  @AIRFLOW_DAGS │ ──────────────> │ All SPCS     │
+ │ dags/*.py     │   (sync_dags.sh)   │  (internal     │  (~30-60 sec)   │ containers   │
+ └──────────────┘                     │   stage)       │                 │ /opt/airflow/ │
+                                      └────────────────┘                 │  dags/       │
+                                                                         └─────────────┘
+```
+
+1. **Edit locally** — write or modify DAG files in the `dags/` directory
+2. **Sync** — run `bash scripts/sync_dags.sh --connection <name>` (takes ~2-5 seconds)
+3. **Wait** — SPCS stage volumes auto-sync to containers within ~30-60 seconds
+4. **Verify** — check the Airflow UI or dag-processor logs:
+   ```bash
+   snow sql --connection <connection> -q \
+     "CALL SYSTEM\$GET_SERVICE_LOGS('AIRFLOW_DB.AIRFLOW_SCHEMA.AF_DAG_PROCESSOR', 0, 'dag-processor', 50);"
+   ```
+
+### What requires a full redeploy
+
+| Change | Action Required |
+|--------|----------------|
+| New/modified DAG file | `sync_dags.sh` only (no restart) |
+| New Python dependency | Rebuild Docker image + `build_and_push.sh` + recreate services |
+| Airflow config change (env var) | Update spec YAML + recreate affected service(s) |
+| Spec YAML change (resources, volumes) | Re-upload spec + `ALTER SERVICE ... FROM SPECIFICATION` or recreate |
+| New Snowflake secret | Run secret SQL + recreate services that reference it |
+
+### Removing a DAG
+
+```sql
+-- Remove a DAG file from the stage
+REMOVE @AIRFLOW_DB.AIRFLOW_SCHEMA.AIRFLOW_DAGS/old_dag.py;
+```
+
+The dag-processor will detect the removal and mark the DAG as "missing" in the UI. You may also want to delete the DAG metadata from the Airflow UI (DAGs > kebab menu > Delete).
+
+### Local testing (without SPCS)
+
+DAGs that use SPCS-native OAuth (`/snowflake/session/token`) only work inside SPCS containers. For local syntax/import validation:
+
+```bash
+# Validate DAG syntax without running
+python -c "import ast; ast.parse(open('dags/my_dag.py').read()); print('OK')"
+
+# Run the full test suite (includes DAG syntax checks)
+pytest tests/test_dag_syntax.py -v
+```
+
+### Local Development with Docker Compose
+
+For full local DAG development and execution without SPCS, use the included `docker-compose.yaml`. It runs the same Airflow Docker image with LocalExecutor (no Celery/Redis needed).
+
+```bash
+# 1. Set up credentials
+cp .env.example .env
+# Edit .env — fill in SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD
+
+# 2. Start the local stack
+docker compose up -d
+
+# 3. Open the Airflow UI
+open http://localhost:8080    # admin / admin
+```
+
+DAGs are bind-mounted from `./dags` — edit locally and changes appear immediately (no rebuild, no sync).
+
+**What's included:**
+
+| Service | Purpose |
+|---------|---------|
+| `postgres` | Airflow metadata database |
+| `airflow-init` | One-shot: runs `db migrate` + creates admin user |
+| `airflow-webserver` | Airflow API server + UI on port 8080 |
+| `airflow-scheduler` | DAG scheduling + task execution (LocalExecutor) |
+| `airflow-dag-processor` | DAG file parsing (separate from scheduler in Airflow 3.x) |
+
+**Rebuilding after dependency changes:**
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+**Stopping:**
+
+```bash
+docker compose down        # stop and remove containers
+docker compose down -v     # also remove postgres volume (full reset)
+```
 
 ## Operations
 
@@ -238,9 +380,49 @@ SHOW ENDPOINTS IN SERVICE AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER;
 
 ## Tests
 
+Three test tiers, from fastest to most comprehensive:
+
+### Offline Tests (531 tests, ~8s)
+
+Static validation of every artifact — no Docker, no network, no SPCS required:
+
 ```bash
 pytest tests/ -v
-# 143 passed, 1 skipped
+# 530 passed, 1 skipped
 ```
 
-Tests validate: spec schemas, inter-service connectivity, env var consistency, Dockerfile correctness, DAG syntax, and SQL script patterns.
+A bare `pytest` (no flags) runs only offline tests — `pytest.ini` excludes `e2e` and `local` markers by default.
+
+### Local Integration Tests (5 tests, ~65s)
+
+Spins up the full Airflow stack via `docker-compose.yaml`, exercises the DAG lifecycle via the Airflow 3.x REST API, then tears everything down:
+
+```bash
+pytest tests/test_local_compose.py -m local -v
+```
+
+**Requirements**: Docker Desktop running, ports 8080 + 5432 free.
+
+**What it tests**:
+- Health endpoint responds (`/api/v2/monitor/health`)
+- DAGs are parsed and listed via REST API
+- `example_taskflow` DAG triggers and completes with `state=success`
+- All 3 task instances (extract → transform → load) succeed
+- XCom data flows between tasks
+
+### End-to-End Tests (6 tests, ~4min, requires live SPCS)
+
+The E2E test suite (`tests/test_e2e_spcs.py`) verifies the full deployment pipeline against a running SPCS cluster:
+
+1. Uploads DAGs via `sync_dags.sh` (including `utils/` subdirectory)
+2. Verifies stage contents via `LIST @AIRFLOW_DAGS`
+3. Confirms the dag-processor has parsed DAGs (via `EXECUTE JOB SERVICE`)
+4. Triggers `example_taskflow` and polls until the run succeeds
+5. Triggers `e2e_snowflake_objects` — a DAG that creates a real Snowflake table, inserts data, and self-validates — then queries the table directly via `snow sql` to confirm the objects exist with expected data
+
+```bash
+# Requires a running SPCS cluster and a snow CLI connection named 'aws_spcs'
+pytest tests/test_e2e_spcs.py -m e2e -v
+```
+
+E2E tests are excluded from normal `pytest` runs. They use `EXECUTE JOB SERVICE` on `WORKER_POOL` to run Airflow CLI commands inside one-shot containers connected to the shared metadata database.

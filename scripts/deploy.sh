@@ -82,6 +82,17 @@ for dag_file in "${DAGS_DIR}"/*.py; do
     echo "==> Uploading ${FILENAME} to @${SF_QUALIFIED}.AIRFLOW_DAGS"
     ${SNOW_CMD} --query "PUT file://${dag_file} @${SF_QUALIFIED}.AIRFLOW_DAGS AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
 done
+# Upload subdirectories (e.g., dags/utils/) preserving directory structure
+for subdir in "${DAGS_DIR}"/*/; do
+    [[ -d "${subdir}" ]] || continue
+    dirname="$(basename "${subdir}")"
+    [[ "${dirname}" == "__pycache__" ]] && continue
+    for f in "${subdir}"*.py; do
+        FILENAME="$(basename "${f}")"
+        echo "==> Uploading ${dirname}/${FILENAME} to @${SF_QUALIFIED}.AIRFLOW_DAGS/${dirname}"
+        ${SNOW_CMD} --query "PUT file://${f} @${SF_QUALIFIED}.AIRFLOW_DAGS/${dirname} AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
+    done
+done
 shopt -u nullglob
 echo ""
 

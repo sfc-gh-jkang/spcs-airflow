@@ -1,20 +1,21 @@
-"""Snowflake ETL Pipeline — ingest, transform, validate using SPCS OAuth.
+"""Snowflake ETL Pipeline — ingest, transform, validate.
 
 Demonstrates a real end-to-end data pipeline on Snowflake via Airflow 3.x:
   create_raw_table → ingest_raw_data → transform_to_summary → validate_results → cleanup_raw
 
-Uses the SPCS OAuth token at /snowflake/session/token for zero-config authentication.
-No Snowflake connection URI or credentials needed — runs natively inside SPCS.
+Works on both SPCS (OAuth token) and locally (env var credentials).
+Uses the shared connection helper from utils.snowflake_conn.
 
 Schedule: manual trigger only (schedule=None).
 Self-contained: creates and cleans up its own tables.
 """
 
 import logging
-import os
 
 import pendulum
 from airflow.sdk import DAG, task
+
+from utils.snowflake_conn import get_snowflake_connection, run_sql
 
 logger = logging.getLogger(__name__)
 
@@ -23,40 +24,15 @@ SNOWFLAKE_SCHEMA = "AIRFLOW_SCHEMA"
 SNOWFLAKE_WAREHOUSE = "AIRFLOW_SETUP_WH"
 
 
-def get_snowflake_connection():
-    """Create a Snowflake connection using the SPCS OAuth token.
-
-    Inside SPCS containers, Snowflake automatically provides:
-    - /snowflake/session/token: OAuth token (refreshed every few minutes)
-    - SNOWFLAKE_ACCOUNT env var: account identifier
-    - SNOWFLAKE_HOST env var: internal host for private connectivity
-    """
-    import snowflake.connector
-
-    with open("/snowflake/session/token", "r") as f:
-        token = f.read()
-
-    return snowflake.connector.connect(
-        host=os.getenv("SNOWFLAKE_HOST"),
-        account=os.getenv("SNOWFLAKE_ACCOUNT"),
-        token=token,
-        authenticator="oauth",
+def _run_sql(sql: str, fetch: bool = False):
+    """Execute SQL with default database/schema/warehouse."""
+    return run_sql(
+        sql,
+        fetch=fetch,
         database=SNOWFLAKE_DB,
         schema=SNOWFLAKE_SCHEMA,
         warehouse=SNOWFLAKE_WAREHOUSE,
     )
-
-
-def run_sql(sql: str, fetch: bool = False):
-    """Execute SQL via SPCS OAuth connection."""
-    conn = get_snowflake_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(sql)
-        if fetch:
-            return cur.fetchall()
-    finally:
-        conn.close()
 
 
 with DAG(
@@ -72,7 +48,7 @@ with DAG(
     transforms it into an aggregated summary, validates the output,
     and cleans up.
 
-    Uses SPCS OAuth token — no Snowflake connection config required.
+    Works on SPCS (OAuth) and locally (env var credentials).
     Trigger manually to see it run.
     """,
 ):
@@ -80,7 +56,7 @@ with DAG(
     @task
     def create_raw_table():
         """Create the raw_sales staging table."""
-        run_sql("""
+        _run_sql("""
             CREATE OR REPLACE TABLE raw_sales (
                 sale_id     INTEGER,
                 product     VARCHAR(50),
@@ -94,7 +70,7 @@ with DAG(
     @task
     def ingest_raw_data(status: str):
         """Insert sample sales data into raw_sales."""
-        run_sql("""
+        _run_sql("""
             INSERT INTO raw_sales (sale_id, product, quantity, unit_price, sale_date)
             VALUES
                 (1,  'Laptop',      2,  999.99, '2026-01-15'),
@@ -108,7 +84,7 @@ with DAG(
                 (9,  'Monitor',     1,  349.99, '2026-01-21'),
                 (10, 'Headphones', 12,   59.99, '2026-01-22')
         """)
-        rows = run_sql("SELECT COUNT(*) FROM raw_sales", fetch=True)
+        rows = _run_sql("SELECT COUNT(*) FROM raw_sales", fetch=True)
         count = rows[0][0]
         logger.info("Ingested %d rows into raw_sales", count)
         return count
@@ -116,7 +92,7 @@ with DAG(
     @task
     def transform_to_summary(row_count: int):
         """Aggregate raw sales into a product summary table."""
-        run_sql("""
+        _run_sql("""
             CREATE OR REPLACE TABLE sales_summary AS
             SELECT
                 product,
@@ -128,7 +104,7 @@ with DAG(
             GROUP BY product
             ORDER BY total_revenue DESC
         """)
-        results = run_sql("""
+        results = _run_sql("""
             SELECT product, total_quantity, total_revenue
             FROM sales_summary
             ORDER BY total_revenue DESC
@@ -140,7 +116,7 @@ with DAG(
     @task
     def validate_results(product_count: int):
         """Validate the summary has expected data."""
-        rows = run_sql("""
+        rows = _run_sql("""
             SELECT
                 COUNT(*)           AS product_count,
                 SUM(total_revenue) AS grand_total
@@ -157,7 +133,7 @@ with DAG(
     @task
     def cleanup_raw(validation: dict):
         """Drop the raw staging table (summary table kept for inspection)."""
-        run_sql("DROP TABLE IF EXISTS raw_sales")
+        _run_sql("DROP TABLE IF EXISTS raw_sales")
         logger.info("Cleaned up raw_sales. Summary table retained with %d products.", validation['products'])
         return "done"
 
