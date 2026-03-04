@@ -77,29 +77,38 @@ echo ""
 
 # Step 4: Create services
 # NOTE: Docker images must be built and pushed BEFORE this step.
-#   Run: ./scripts/build_and_push.sh <REPO_URL>
+#   Run: ./scripts/build_and_push.sh --connection <name>
 echo "--- Phase 4: Create Services ---"
 echo "==> Checking for required Docker images..."
 IMAGE_LIST=$(${SNOW_CMD} --query "CALL SYSTEM\$REGISTRY_LIST_IMAGES('/airflow_db/airflow_schema/airflow_repository');" 2>&1 || true)
-MISSING_IMAGES=()
-for IMG in airflow airflow-postgres airflow-redis; do
-    if ! echo "${IMAGE_LIST}" | grep -qi "${IMG}"; then
-        MISSING_IMAGES+=("${IMG}")
-    fi
-done
-if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
+
+# SYSTEM$REGISTRY_LIST_IMAGES can return 401 on some cloud providers (known GCP issue).
+# If the call failed, warn and proceed — service creation will fail fast if images are missing.
+if echo "${IMAGE_LIST}" | grep -qi "error\|unauthorized\|failed"; then
+    echo "==> WARNING: Could not query image registry (this is normal on some cloud providers)."
+    echo "    Proceeding to service creation. If images are missing, services will fail to start."
     echo ""
-    echo "ERROR: Required Docker images not found in repository:"
-    for IMG in "${MISSING_IMAGES[@]}"; do
-        echo "  - ${IMG}"
+else
+    MISSING_IMAGES=()
+    for IMG in airflow airflow-postgres airflow-redis; do
+        if ! echo "${IMAGE_LIST}" | grep -qi "${IMG}"; then
+            MISSING_IMAGES+=("${IMG}")
+        fi
     done
+    if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
+        echo ""
+        echo "ERROR: Required Docker images not found in repository:"
+        for IMG in "${MISSING_IMAGES[@]}"; do
+            echo "  - ${IMG}"
+        done
+        echo ""
+        echo "  Build and push images first:"
+        echo "    bash scripts/build_and_push.sh --connection ${CONNECTION}"
+        exit 1
+    fi
+    echo "==> All required images found."
     echo ""
-    echo "  Build and push images first:"
-    echo "    bash scripts/build_and_push.sh --connection ${CONNECTION}"
-    exit 1
 fi
-echo "==> All required images found."
-echo ""
 run_sql_file "${SQL_DIR}/07_create_services.sql" "Create all 7 services"
 echo ""
 
@@ -107,8 +116,23 @@ echo ""
 echo "--- Phase 5: Validation ---"
 run_sql_file "${SQL_DIR}/08_validate.sql" "Validate services"
 
+# Show endpoint URL and login instructions
+echo ""
+ENDPOINT_URL=$(${SNOW_CMD} --query "SHOW ENDPOINTS IN SERVICE AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER;" --format json 2>/dev/null \
+    | python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['ingress_url'])" 2>/dev/null || true)
+
 echo "============================================="
-echo "  Deployment complete."
-echo "  Run 'snow sql -q \"SHOW ENDPOINTS IN SERVICE AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER\" --connection ${CONNECTION}'"
-echo "  to get the Airflow UI URL."
+echo "  Deployment complete!"
+if [[ -n "${ENDPOINT_URL}" ]]; then
+echo ""
+echo "  Airflow UI: https://${ENDPOINT_URL}"
+echo ""
+echo "  Login:"
+echo "    1. Authenticate via Snowflake SSO (automatic on first visit)"
+echo "    2. Airflow credentials: admin / admin"
+fi
+echo ""
+echo "  Useful commands:"
+echo "    snow sql -q \"SHOW ENDPOINTS IN SERVICE AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER\" --connection ${CONNECTION}"
+echo "    snow sql -q \"SELECT SYSTEM\\\$GET_SERVICE_STATUS('AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER')\" --connection ${CONNECTION}"
 echo "============================================="

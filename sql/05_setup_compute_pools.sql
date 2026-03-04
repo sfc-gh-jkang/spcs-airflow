@@ -17,10 +17,11 @@ CREATE COMPUTE POOL IF NOT EXISTS INFRA_POOL
     AUTO_SUSPEND_SECS = 3600;
 
 -- Core Airflow services pool
--- CPU_X64_M: 6 vCPU, 28GB RAM - runs 4 Airflow processes
+-- CPU_X64_M: 6 vCPU, 28GB RAM
+-- 4 services (api-server, scheduler, dag-processor, triggerer) each need their own node
 CREATE COMPUTE POOL IF NOT EXISTS CORE_POOL
     MIN_NODES = 1
-    MAX_NODES = 2
+    MAX_NODES = 4
     INSTANCE_FAMILY = CPU_X64_M
     AUTO_RESUME = TRUE
     AUTO_SUSPEND_SECS = 3600;

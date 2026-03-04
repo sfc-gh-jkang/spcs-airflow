@@ -9,7 +9,7 @@ Production-grade reference architecture for running Apache Airflow 3.1.7 on SPCS
 │                    SNOWPARK CONTAINER SERVICES                   │
 │                                                                 │
 │  ┌─────────────┐  ┌──────────────────────────────────────────┐  │
-│  │ INFRA_POOL   │  │ CORE_POOL (CPU_X64_M, 1-2 nodes)       │  │
+│  │ INFRA_POOL   │  │ CORE_POOL (CPU_X64_M, 1-4 nodes)       │  │
 │  │ CPU_X64_S    │  │                                          │  │
 │  │ 1 node       │  │  AF_API_SERVER ──┐                      │  │
 │  │              │  │  AF_SCHEDULER    │  Execution API (JWT)  │  │
@@ -192,6 +192,11 @@ All Airflow services share these critical environment variables:
 6. **Execution API URL**: Must use `AIRFLOW__CORE__EXECUTION_API_SERVER_URL` with `/execution/` suffix (NOT the Airflow 2.x `INTERNAL_API_URL`)
 7. **JWT secret sharing**: `AIRFLOW__API_AUTH__JWT_SECRET` must be identical on all services or tasks fail with `Signature verification failed`
 8. **Simple Auth Manager**: `airflow users create` is ignored; write `{"admin":"admin"}` to `/opt/airflow/simple_auth_manager_passwords.json.generated` before api-server start for fixed credentials
+9. **Stage mount v2 syntax required on GCP**: Use `source: stage` + `stageConfig: { name: "@stage" }` (v2), not `source: "@stage"` (v1). AWS/Azure accept both; GCP rejects v1.
+10. **Compute pool sizing**: Each SPCS service needs its own node slot. A pool with `MAX_NODES=2` running 4 services will leave 2 services stuck PENDING. Set `MAX_NODES >= number of services` in that pool.
+11. **`SYSTEM$REGISTRY_LIST_IMAGES` on GCP**: Returns `401 Unauthorized` on GCP accounts (platform bug). Use error handling or skip the image check on GCP.
+12. **`DROP SERVICE` with block storage**: Services using `blockStorage` volumes require `DROP SERVICE ... FORCE` or `snapshotOnDelete=true` in the spec.
+13. **Log symlinks crash on GCP stage mounts**: Airflow tries to symlink "latest" log directories. GCP stage mounts reject symlinks (`Errno 95`). Set `AIRFLOW__SCHEDULER__SYMLINK_LATEST_LOG=False` on all services, and don't mount the logs stage on the dag_processor (it only needs dags).
 
 ## Snowflake Connection (SPCS OAuth)
 

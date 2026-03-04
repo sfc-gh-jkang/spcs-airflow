@@ -26,19 +26,14 @@ done
 # Resolve REPO_URL: either from --connection or from positional arg
 if [[ -n "${CONNECTION}" ]]; then
     echo "==> Detecting image repository URL via --connection ${CONNECTION}..."
-    REPO_OUTPUT=$(snow sql --connection "${CONNECTION}" -q "SHOW IMAGE REPOSITORIES IN SCHEMA AIRFLOW_DB.AIRFLOW_SCHEMA;" 2>&1)
-
-    # Extract the repository_url from the output
-    REPO_URL=$(echo "${REPO_OUTPUT}" | grep -i 'airflow_repository' | grep -oE '[a-z0-9._-]+\.registry\.snowflakecomputing\.com/[a-zA-Z0-9_/]+' | head -1)
+    REPO_URL=$(snow sql --connection "${CONNECTION}" -q "SHOW IMAGE REPOSITORIES IN SCHEMA AIRFLOW_DB.AIRFLOW_SCHEMA;" --format json 2>/dev/null \
+        | python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['repository_url'])" 2>/dev/null || true)
 
     if [[ -z "${REPO_URL}" ]]; then
         echo "ERROR: Could not detect image repository URL."
         echo "  Make sure AIRFLOW_DB.AIRFLOW_SCHEMA.AIRFLOW_REPOSITORY exists."
-        echo "  Run deploy.sh first (it creates the repo in Phase 1), or run:"
-        echo "    snow sql --connection ${CONNECTION} -q \"$(cat "${PROJECT_DIR}/sql/06_setup_image_repo.sql")\""
-        echo ""
-        echo "  Raw output from SHOW IMAGE REPOSITORIES:"
-        echo "${REPO_OUTPUT}"
+        echo "  Run deploy.sh first (it creates the repo in Phase 1), or pass the URL directly:"
+        echo "    $0 <REPO_URL>"
         exit 1
     fi
     echo "==> Found: ${REPO_URL}"

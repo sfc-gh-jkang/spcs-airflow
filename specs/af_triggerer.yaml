@@ -28,6 +28,8 @@ spec:
           mountPath: /opt/airflow/dags
   volumes:
     - name: dags-volume
-      source: "@airflow_db.airflow_schema.airflow_dags"
+      source: stage
+      stageConfig:
+        name: "@airflow_db.airflow_schema.airflow_dags"
       uid: 50000
       gid: 0

@@ -12,6 +12,7 @@ spec:
         AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
         AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
         AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+        AIRFLOW__SCHEDULER__SYMLINK_LATEST_LOG: "False"
         AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
         AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://af-api-server:8080/execution/"
         AIRFLOW__API_AUTH__JWT_SECRET: "{{secret.airflow_jwt_secret.secret_string}}"
@@ -40,10 +41,14 @@ spec:
       public: true
   volumes:
     - name: dags-volume
-      source: "@airflow_db.airflow_schema.airflow_dags"
+      source: stage
+      stageConfig:
+        name: "@airflow_db.airflow_schema.airflow_dags"
       uid: 50000
       gid: 0
     - name: logs-volume
-      source: "@airflow_db.airflow_schema.airflow_logs"
+      source: stage
+      stageConfig:
+        name: "@airflow_db.airflow_schema.airflow_logs"
       uid: 50000
       gid: 0
