@@ -47,6 +47,8 @@ Production-grade reference architecture for running Apache Airflow 3.1.7 on SPCS
 
 ## Quick Start
 
+> **Order matters.** Steps 1-2 prepare secrets and infrastructure. Step 3 builds Docker images (requires the image repo from step 2). Step 4 creates services (requires images from step 3). `deploy.sh` will abort with an actionable error if images are missing.
+
 ### 1. Generate secrets
 
 ```bash
@@ -58,39 +60,41 @@ bash scripts/generate_secrets.sh
 > Requires `python3` with the `cryptography` package (`pip3 install cryptography`).
 > No Snowflake credentials needed in the secrets — DAGs authenticate via SPCS native OAuth tokens automatically.
 
-### 2. Build and push Docker images
+### 2. Create Snowflake objects and image repository
 
 ```bash
-bash scripts/build_and_push.sh
+# Runs SQL 01-06: database, stages, secrets, networking, compute pools, image repo
+# Also uploads specs and DAGs to stages
+# Stops BEFORE creating services (that requires images)
+bash scripts/deploy.sh --connection <connection>
+```
+
+On first run, `deploy.sh` will detect that images haven't been pushed yet and exit with instructions for step 3. This is expected — it means all Snowflake objects are ready for the image build.
+
+### 3. Build and push Docker images
+
+```bash
+# Auto-detects registry URL from the connection
+bash scripts/build_and_push.sh --connection <connection>
 # Builds and pushes: airflow:3.1.7, airflow-postgres:17.9, airflow-redis:7.4
 ```
 
-Or manually:
+Or with an explicit registry URL:
 
 ```bash
-REGISTRY="<account>.registry.snowflakecomputing.com/airflow_db/airflow_schema/airflow_repository"
-docker login <account>.registry.snowflakecomputing.com
-
-docker build --platform linux/amd64 -t "$REGISTRY/airflow:3.1.7" images/airflow/
-docker push "$REGISTRY/airflow:3.1.7"
-
-docker build --platform linux/amd64 -t "$REGISTRY/airflow-postgres:17.9" images/postgres/
-docker push "$REGISTRY/airflow-postgres:17.9"
-
-docker build --platform linux/amd64 -t "$REGISTRY/airflow-redis:7.4" images/redis/
-docker push "$REGISTRY/airflow-redis:7.4"
+bash scripts/build_and_push.sh <account>.registry.snowflakecomputing.com/airflow_db/airflow_schema/airflow_repository
 ```
 
-### 3. Deploy everything
+### 4. Deploy services
 
 ```bash
+# Re-run deploy.sh — this time images exist, so it creates all 7 services
 bash scripts/deploy.sh --connection <connection>
-# Runs all SQL setup → uploads specs + DAGs → creates services → validates
 ```
 
-Replace `<connection>` with your `snow` CLI connection name.
+`deploy.sh` is idempotent: re-running it after images are pushed will skip through the already-created objects and proceed to service creation.
 
-### 4. Access the Airflow UI
+### 5. Access the Airflow UI
 
 ```sql
 SHOW ENDPOINTS IN SERVICE AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER;

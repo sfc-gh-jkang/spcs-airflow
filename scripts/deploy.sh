@@ -95,10 +95,7 @@ if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
     done
     echo ""
     echo "  Build and push images first:"
-    echo "    bash scripts/build_and_push.sh <REPO_URL>"
-    echo ""
-    echo "  Get your REPO_URL with:"
-    echo "    snow sql -q \"SHOW IMAGE REPOSITORIES IN SCHEMA AIRFLOW_DB.AIRFLOW_SCHEMA\" --connection ${CONNECTION}"
+    echo "    bash scripts/build_and_push.sh --connection ${CONNECTION}"
     exit 1
 fi
 echo "==> All required images found."
