@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # teardown.sh - Tear down the entire Airflow SPCS stack.
 # Drops all services, compute pools, and optionally the database.
-# Usage: ./scripts/teardown.sh [--connection <name>] [--full]
+# Usage: ./scripts/teardown.sh [--connection <name>] [--full] [--yes]
 #   --connection: Snowflake connection name (default: snowflake)
 #   --full:       Also drop the database, secrets, and network objects
+#   --yes:        Skip confirmation prompt for --full (for scripted use)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,11 +12,13 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 CONNECTION="snowflake"
 FULL_TEARDOWN=false
+SKIP_CONFIRM=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --connection) CONNECTION="$2"; shift 2 ;;
         --full) FULL_TEARDOWN=true; shift ;;
+        --yes) SKIP_CONFIRM=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -55,6 +58,16 @@ run_sql "Drop INFRA_POOL"   "DROP COMPUTE POOL IF EXISTS INFRA_POOL;"
 echo ""
 
 if [ "${FULL_TEARDOWN}" = true ]; then
+    # Safety confirmation for destructive --full teardown
+    if [ "${SKIP_CONFIRM}" = false ]; then
+        echo "WARNING: --full will DROP DATABASE AIRFLOW_DB on connection '${CONNECTION}'."
+        read -rp "Type 'yes' to confirm: " CONFIRM
+        if [ "${CONFIRM}" != "yes" ]; then
+            echo "Aborted."
+            exit 1
+        fi
+    fi
+
     # Phase 3: Drop network and integration objects
     echo "--- Phase 3: Drop Network Objects ---"
     run_sql "Drop External Access Integration" "DROP INTEGRATION IF EXISTS AIRFLOW_EXTERNAL_ACCESS;"

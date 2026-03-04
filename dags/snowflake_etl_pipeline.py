@@ -10,9 +10,13 @@ Schedule: manual trigger only (schedule=None).
 Self-contained: creates and cleans up its own tables.
 """
 
+import logging
 import os
+
 import pendulum
 from airflow.sdk import DAG, task
+
+logger = logging.getLogger(__name__)
 
 SNOWFLAKE_DB = "AIRFLOW_DB"
 SNOWFLAKE_SCHEMA = "AIRFLOW_SCHEMA"
@@ -106,7 +110,7 @@ with DAG(
         """)
         rows = run_sql("SELECT COUNT(*) FROM raw_sales", fetch=True)
         count = rows[0][0]
-        print(f"Ingested {count} rows into raw_sales")
+        logger.info("Ingested %d rows into raw_sales", count)
         return count
 
     @task
@@ -130,7 +134,7 @@ with DAG(
             ORDER BY total_revenue DESC
         """, fetch=True)
         for product, qty, revenue in results:
-            print(f"  {product}: {qty} units, ${revenue:,.2f} revenue")
+            logger.info("  %s: %d units, $%,.2f revenue", product, qty, revenue)
         return len(results)
 
     @task
@@ -143,16 +147,18 @@ with DAG(
             FROM sales_summary
         """, fetch=True)
         count, total = rows[0]
-        print(f"Products: {count}, Grand total revenue: ${total:,.2f}")
-        assert count == 5, f"Expected 5 products, got {count}"
-        assert total > 0, "Revenue should be positive"
+        logger.info("Products: %d, Grand total revenue: $%,.2f", count, total)
+        if count != 5:
+            raise ValueError(f"Expected 5 products, got {count}")
+        if total <= 0:
+            raise ValueError(f"Revenue should be positive, got {total}")
         return {"products": count, "grand_total": float(total)}
 
     @task
     def cleanup_raw(validation: dict):
         """Drop the raw staging table (summary table kept for inspection)."""
         run_sql("DROP TABLE IF EXISTS raw_sales")
-        print(f"Cleaned up raw_sales. Summary table retained with {validation['products']} products.")
+        logger.info("Cleaned up raw_sales. Summary table retained with %d products.", validation['products'])
         return "done"
 
     t1 = create_raw_table()

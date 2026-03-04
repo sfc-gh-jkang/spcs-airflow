@@ -100,7 +100,7 @@ A platform engineer restarts a single service (e.g., scheduler) without affectin
 - **FR-004**: All compute pools MUST have AUTO_SUSPEND_SECS configured
 - **FR-005**: System MUST store secrets (fernet key, postgres password, redis password) as Snowflake SECRET objects
 - **FR-006**: System MUST use Snowflake stages for DAG files (`@airflow_dags`) and task logs (`@airflow_logs`)
-- **FR-007**: System MUST include git-sync sidecar containers for DAG synchronization in scheduler, dag-processor, api-server, and worker services
+- **FR-007**: System MUST store DAG files and logs on Snowflake stages (`@airflow_dags`, `@airflow_logs`)
 - **FR-008**: All Docker images MUST be built for `linux/amd64` platform
 - **FR-009**: System MUST use CeleryExecutor with Redis as broker and PostgreSQL as result backend
 - **FR-010**: System MUST include suspend/resume SQL scripts for cost management

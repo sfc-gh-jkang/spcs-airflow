@@ -103,3 +103,55 @@ class TestDagAttributes:
         with open(dag_file) as f:
             source = f.read()
         assert "start_date" in source, f"{dag_file}: must define start_date"
+
+    def test_has_catchup_false(self, dag_file):
+        with open(dag_file) as f:
+            source = f.read()
+        assert "catchup=False" in source or "catchup = False" in source, (
+            f"{dag_file}: must set catchup=False to avoid backfill storms"
+        )
+
+    def test_has_tags(self, dag_file):
+        with open(dag_file) as f:
+            source = f.read()
+        assert "tags=" in source or "tags =" in source, (
+            f"{dag_file}: must define tags for UI filtering"
+        )
+
+
+class TestDagCodeQuality:
+    """DAGs must follow code quality standards."""
+
+    def test_no_print_statements(self, dag_file):
+        """DAGs must use logging, not print()."""
+        with open(dag_file) as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "print":
+                    pytest.fail(
+                        f"{dag_file}:{node.lineno}: uses print() — "
+                        "use logger.info() instead"
+                    )
+
+    def test_logger_imported_when_used(self, dag_file):
+        """If 'logger.' appears in code, logging must be imported."""
+        with open(dag_file) as f:
+            source = f.read()
+        if "logger." in source:
+            assert "import logging" in source, (
+                f"{dag_file}: uses 'logger.' but does not import logging"
+            )
+            assert "getLogger" in source, (
+                f"{dag_file}: uses 'logger.' but does not call getLogger()"
+            )
+
+    def test_has_docstring(self, dag_file):
+        """Each DAG file should have a module-level docstring."""
+        with open(dag_file) as f:
+            tree = ast.parse(f.read())
+        docstring = ast.get_docstring(tree)
+        assert docstring is not None, (
+            f"{dag_file}: must have a module-level docstring"
+        )

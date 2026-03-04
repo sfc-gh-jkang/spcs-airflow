@@ -57,7 +57,7 @@ bash scripts/generate_secrets.sh
 # Writes sql/03_setup_secrets.sql (gitignored, never committed)
 ```
 
-> Requires `python3` with the `cryptography` package (`pip3 install cryptography`).
+> Requires `python3` with the `cryptography` package (`pip install cryptography` or `uv pip install cryptography`).
 > No Snowflake credentials needed in the secrets — DAGs authenticate via SPCS native OAuth tokens automatically.
 
 ### 2. Create Snowflake objects and image repository
@@ -106,6 +106,12 @@ The endpoint URL requires **two authentication steps**:
 
 > **Security**: Change the default `admin/admin` password for any non-demo deployment. The password is set via `simple_auth_manager_passwords.json.generated` written by the entrypoint before the api-server starts. See `images/airflow/entrypoint.sh`.
 
+## Dependencies
+
+Additional Python packages are managed with [UV](https://github.com/astral-sh/uv) and `pyproject.toml` (not pip/requirements.txt). Versions are pinned to the [Airflow 3.1.7 constraints file](https://github.com/apache/airflow/blob/constraints-3.1.7/constraints-3.12.txt) for deterministic builds.
+
+See `images/airflow/pyproject.toml` for the full list.
+
 ## Project Structure
 
 ```
@@ -118,7 +124,7 @@ airflow-spcs-v3/
 │   ├── airflow/
 │   │   ├── Dockerfile          # Based on apache/airflow:3.1.7
 │   │   ├── entrypoint.sh       # Role-based entrypoint (db migrate + role dispatch)
-│   │   └── requirements.txt    # Additional Python packages
+│   │   └── pyproject.toml      # Python deps (UV, pinned to Airflow 3.1.7 constraints)
 │   ├── postgres/
 │   │   └── Dockerfile          # PostgreSQL 17.9 with custom config
 │   └── redis/

@@ -6,8 +6,12 @@ Demonstrates:
 - XCom passing between tasks (JSONB in Airflow 3.x)
 """
 
+import logging
+
 import pendulum
 from airflow.sdk import DAG, task
+
+logger = logging.getLogger(__name__)
 
 
 with DAG(
@@ -42,8 +46,8 @@ with DAG(
     @task
     def load(summary: dict):
         """Load transformed data (log summary)."""
-        print(f"Loaded {summary['count']} records from {summary['source']}")
-        print(f"Total value: {summary['total']}")
+        logger.info("Loaded %d records from %s", summary["count"], summary["source"])
+        logger.info("Total value: %d", summary["total"])
         return summary
 
     raw_data = extract()

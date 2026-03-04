@@ -120,3 +120,66 @@ class TestDockerfileSecurity:
                     assert "${" in line or "$$" in line or line.strip().endswith('""'), (
                         f"{rel_path}: possible embedded secret: {line.strip()}"
                     )
+
+
+class TestAirflowDockerfile:
+    """Airflow Dockerfile must copy support files and run as non-root."""
+
+    DOCKERFILE = os.path.join(IMAGES_DIR, "airflow", "Dockerfile")
+
+    def test_copies_pyproject_toml(self):
+        if not os.path.isfile(self.DOCKERFILE):
+            pytest.skip("airflow/Dockerfile not yet created")
+        with open(self.DOCKERFILE) as f:
+            content = f.read()
+        assert "pyproject.toml" in content, (
+            "airflow/Dockerfile: must COPY pyproject.toml for UV dependency install"
+        )
+
+    def test_copies_entrypoint(self):
+        if not os.path.isfile(self.DOCKERFILE):
+            pytest.skip("airflow/Dockerfile not yet created")
+        with open(self.DOCKERFILE) as f:
+            content = f.read()
+        assert "entrypoint.sh" in content, (
+            "airflow/Dockerfile: must COPY entrypoint.sh"
+        )
+
+    def test_sets_entrypoint(self):
+        if not os.path.isfile(self.DOCKERFILE):
+            pytest.skip("airflow/Dockerfile not yet created")
+        with open(self.DOCKERFILE) as f:
+            content = f.read()
+        assert "ENTRYPOINT" in content, (
+            "airflow/Dockerfile: must set ENTRYPOINT"
+        )
+
+    def test_runs_as_airflow_user(self):
+        """Final USER directive should be non-root (airflow)."""
+        if not os.path.isfile(self.DOCKERFILE):
+            pytest.skip("airflow/Dockerfile not yet created")
+        with open(self.DOCKERFILE) as f:
+            lines = f.readlines()
+        user_lines = [l.strip() for l in lines if l.strip().startswith("USER")]
+        assert len(user_lines) >= 1, "airflow/Dockerfile: must have USER directive"
+        assert user_lines[-1] == "USER airflow", (
+            f"airflow/Dockerfile: final USER must be 'airflow', got '{user_lines[-1]}'"
+        )
+
+    def test_installs_uv(self):
+        if not os.path.isfile(self.DOCKERFILE):
+            pytest.skip("airflow/Dockerfile not yet created")
+        with open(self.DOCKERFILE) as f:
+            content = f.read()
+        assert "uv" in content, (
+            "airflow/Dockerfile: must install uv for dependency management"
+        )
+
+    def test_no_requirements_txt(self):
+        if not os.path.isfile(self.DOCKERFILE):
+            pytest.skip("airflow/Dockerfile not yet created")
+        with open(self.DOCKERFILE) as f:
+            content = f.read()
+        assert "requirements.txt" not in content, (
+            "airflow/Dockerfile: must use pyproject.toml, not requirements.txt"
+        )

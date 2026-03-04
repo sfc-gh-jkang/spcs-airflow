@@ -11,9 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER airflow
 
-# Install additional providers and celery
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Install uv for fast, deterministic dependency resolution
+RUN pip install --no-cache-dir uv
+
+# Install additional providers and celery (pinned to Airflow 3.1.7 constraints)
+COPY pyproject.toml /tmp/pyproject.toml
+RUN cd /tmp && uv pip install --system --no-cache .
 
 # Copy entrypoint script and make executable
 COPY entrypoint.sh /entrypoint.sh

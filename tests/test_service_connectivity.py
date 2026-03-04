@@ -11,8 +11,9 @@ These are structural tests (not live connectivity tests).
 """
 
 import os
-import yaml
+
 import pytest
+import yaml
 
 SPECS_DIR = os.path.join(os.path.dirname(__file__), "..", "specs")
 
@@ -27,13 +28,15 @@ CONNECTIVITY_MATRIX = {
         "must_reference": ["af-postgres", "af-redis", "af-api-server"],
         "ports": {"af-postgres": "5432", "af-redis": "6379", "af-api-server": "8080"},
     },
+    # dag-processor and triggerer communicate via the Execution API, not Celery.
+    # They need postgres (metadata DB) and the api-server, but NOT redis.
     "af_dag_processor.yaml": {
-        "must_reference": ["af-postgres", "af-redis", "af-api-server"],
-        "ports": {"af-postgres": "5432", "af-redis": "6379", "af-api-server": "8080"},
+        "must_reference": ["af-postgres", "af-api-server"],
+        "ports": {"af-postgres": "5432", "af-api-server": "8080"},
     },
     "af_triggerer.yaml": {
-        "must_reference": ["af-postgres", "af-redis", "af-api-server"],
-        "ports": {"af-postgres": "5432", "af-redis": "6379", "af-api-server": "8080"},
+        "must_reference": ["af-postgres", "af-api-server"],
+        "ports": {"af-postgres": "5432", "af-api-server": "8080"},
     },
     "af_workers.yaml": {
         "must_reference": ["af-postgres", "af-redis", "af-api-server"],

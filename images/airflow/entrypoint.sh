@@ -11,16 +11,15 @@ set -e
 
 ROLE="${AIRFLOW_ROLE:-api-server}"
 
-# Run database migration before starting any service.
-# Only the first service to run this will actually apply migrations;
-# subsequent calls are no-ops if the DB is already current.
-echo "Running airflow db migrate..."
-airflow db migrate
-
 case "$ROLE" in
     api-server)
+        # Only the api-server runs db migrate to avoid lock contention from
+        # multiple containers migrating simultaneously on startup.
+        echo "Running airflow db migrate..."
+        airflow db migrate
+
         # Set fixed admin password for Simple Auth Manager.
-        # Without this, a random password is generated on every restart.
+        # This is the actual auth source — the JSON file controls login credentials.
         echo '{"admin": "admin"}' > /opt/airflow/simple_auth_manager_passwords.json.generated
         echo "Starting Airflow API Server..."
         exec airflow api-server --port 8080

@@ -132,3 +132,113 @@ class TestSqlObjectNames:
             assert object_name in content, (
                 f"{filename}: must reference {object_name}"
             )
+
+
+ALL_SERVICES = [
+    "AF_POSTGRES", "AF_REDIS", "AF_API_SERVER",
+    "AF_SCHEDULER", "AF_DAG_PROCESSOR", "AF_TRIGGERER", "AF_WORKERS",
+]
+
+
+class TestServiceCreation:
+    """07_create_services.sql must CREATE SERVICE for all 7 services."""
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_creates_service(self, service):
+        path = os.path.join(SQL_DIR, "07_create_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07_create_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert service in content, (
+            f"07_create_services.sql: must create service {service}"
+        )
+
+
+class TestSuspendResume:
+    """Suspend and resume scripts must cover all 7 services."""
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_suspend_covers_service(self, service):
+        path = os.path.join(SQL_DIR, "09_suspend_all.sql")
+        if not os.path.isfile(path):
+            pytest.skip("09_suspend_all.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert service in content, (
+            f"09_suspend_all.sql: must suspend {service}"
+        )
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_resume_covers_service(self, service):
+        path = os.path.join(SQL_DIR, "10_resume_all.sql")
+        if not os.path.isfile(path):
+            pytest.skip("10_resume_all.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert service in content, (
+            f"10_resume_all.sql: must resume {service}"
+        )
+
+
+class TestComputePools:
+    """Compute pool SQL must define all required pools."""
+
+    REQUIRED_POOLS = ["INFRA_POOL", "CORE_POOL", "WORKER_POOL"]
+
+    @pytest.mark.parametrize("pool", REQUIRED_POOLS)
+    def test_pool_defined(self, pool):
+        path = os.path.join(SQL_DIR, "05_setup_compute_pools.sql")
+        if not os.path.isfile(path):
+            pytest.skip("05_setup_compute_pools.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert pool in content, (
+            f"05_setup_compute_pools.sql: must define {pool}"
+        )
+
+
+class TestValidationScript:
+    """08_validate.sql must check service status and endpoints."""
+
+    def test_checks_service_status(self):
+        path = os.path.join(SQL_DIR, "08_validate.sql")
+        if not os.path.isfile(path):
+            pytest.skip("08_validate.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert "SYSTEM$GET_SERVICE_STATUS" in content or "SHOW SERVICES" in content, (
+            "08_validate.sql: must check service status"
+        )
+
+    def test_checks_endpoints(self):
+        path = os.path.join(SQL_DIR, "08_validate.sql")
+        if not os.path.isfile(path):
+            pytest.skip("08_validate.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert "ENDPOINT" in content, (
+            "08_validate.sql: must check service endpoints"
+        )
+
+
+class TestSecretsTemplate:
+    """03_setup_secrets.sql.template must define all required secrets."""
+
+    REQUIRED_SECRETS = [
+        "AIRFLOW_FERNET_KEY",
+        "AIRFLOW_POSTGRES_PWD",
+        "AIRFLOW_REDIS_PWD",
+        "AIRFLOW_JWT_SECRET",
+    ]
+
+    @pytest.mark.parametrize("secret", REQUIRED_SECRETS)
+    def test_secret_defined(self, secret):
+        path = os.path.join(SQL_DIR, "03_setup_secrets.sql.template")
+        if not os.path.isfile(path):
+            pytest.skip("03_setup_secrets.sql.template not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert secret in content, (
+            f"03_setup_secrets.sql.template: must define secret {secret}"
+        )

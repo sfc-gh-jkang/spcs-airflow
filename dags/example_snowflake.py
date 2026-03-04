@@ -6,21 +6,32 @@ Demonstrates:
 - No Snowflake connection URI or credentials needed
 """
 
+import logging
 import os
+
 import pendulum
 from airflow.sdk import DAG, task
+
+logger = logging.getLogger(__name__)
 
 
 def get_snowflake_connection():
     """Create a Snowflake connection using the SPCS OAuth token."""
     import snowflake.connector
 
+    host = os.getenv("SNOWFLAKE_HOST")
+    account = os.getenv("SNOWFLAKE_ACCOUNT")
+    if not host or not account:
+        raise RuntimeError(
+            "SNOWFLAKE_HOST and SNOWFLAKE_ACCOUNT must be set (provided automatically inside SPCS)"
+        )
+
     with open("/snowflake/session/token", "r") as f:
         token = f.read()
 
     return snowflake.connector.connect(
-        host=os.getenv("SNOWFLAKE_HOST"),
-        account=os.getenv("SNOWFLAKE_ACCOUNT"),
+        host=host,
+        account=account,
         token=token,
         authenticator="oauth",
     )
@@ -48,9 +59,10 @@ with DAG(
             cur = conn.cursor()
             cur.execute("SELECT CURRENT_TIMESTAMP() AS ts, CURRENT_ACCOUNT() AS account")
             row = cur.fetchone()
-            print(f"Timestamp: {row[0]}, Account: {row[1]}")
+            logger.info("Timestamp: %s, Account: %s", row[0], row[1])
             return {"timestamp": str(row[0]), "account": row[1]}
         finally:
+            cur.close()
             conn.close()
 
     @task
@@ -61,11 +73,12 @@ with DAG(
             cur = conn.cursor()
             cur.execute("SHOW WAREHOUSES")
             warehouses = cur.fetchall()
-            print(f"Account {account_info['account']} has {len(warehouses)} warehouse(s)")
+            logger.info("Account %s has %d warehouse(s)", account_info["account"], len(warehouses))
             for wh in warehouses:
-                print(f"  - {wh[0]}")
+                logger.info("  - %s", wh[0])
             return len(warehouses)
         finally:
+            cur.close()
             conn.close()
 
     info = query_current_timestamp()

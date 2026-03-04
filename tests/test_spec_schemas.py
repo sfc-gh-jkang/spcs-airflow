@@ -155,3 +155,133 @@ class TestImagePlatform:
             assert self.SPCS_REPO_PATTERN in image or image.startswith("/"), (
                 f"{spec_path}: image '{image}' should reference SPCS repository"
             )
+
+
+class TestStageVolumeConfig:
+    """Stage volumes must use v2 syntax with stageConfig for GCP compat."""
+
+    STAGE_VOLUME_SPECS = [
+        "af_api_server.yaml",
+        "af_scheduler.yaml",
+        "af_dag_processor.yaml",
+        "af_workers.yaml",
+    ]
+
+    @pytest.mark.parametrize("filename", STAGE_VOLUME_SPECS)
+    def test_stage_volumes_use_v2_syntax(self, filename):
+        """Stage volumes must use source: stage + stageConfig (not @stage inline)."""
+        path = os.path.join(SPECS_DIR, filename)
+        if not os.path.isfile(path):
+            pytest.skip(f"{filename} not yet created")
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        volumes = data.get("spec", {}).get("volumes", [])
+        stage_volumes = [v for v in volumes if v.get("source") == "stage"]
+        assert len(stage_volumes) > 0, (
+            f"{filename}: must have at least one stage volume"
+        )
+        for vol in stage_volumes:
+            assert "stageConfig" in vol, (
+                f"{filename}: stage volume '{vol.get('name')}' must use "
+                "stageConfig (v2 syntax) for GCP compatibility"
+            )
+            assert "name" in vol["stageConfig"], (
+                f"{filename}: stageConfig must have 'name' key with @stage ref"
+            )
+
+    @pytest.mark.parametrize("filename", STAGE_VOLUME_SPECS)
+    def test_stage_volumes_set_uid_gid(self, filename):
+        """Stage volumes must set uid=50000/gid=0 for Airflow user."""
+        path = os.path.join(SPECS_DIR, filename)
+        if not os.path.isfile(path):
+            pytest.skip(f"{filename} not yet created")
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        volumes = data.get("spec", {}).get("volumes", [])
+        stage_volumes = [v for v in volumes if v.get("source") == "stage"]
+        for vol in stage_volumes:
+            uid = vol.get("uid", vol.get("stageConfig", {}).get("uid"))
+            gid = vol.get("gid", vol.get("stageConfig", {}).get("gid"))
+            assert uid == 50000, (
+                f"{filename}: stage volume '{vol.get('name')}' must set uid=50000"
+            )
+            assert gid == 0, (
+                f"{filename}: stage volume '{vol.get('name')}' must set gid=0"
+            )
+
+    @pytest.mark.parametrize("filename", STAGE_VOLUME_SPECS)
+    def test_volume_mount_names_match_volumes(self, filename):
+        """Every volumeMount name must reference a defined volume."""
+        path = os.path.join(SPECS_DIR, filename)
+        if not os.path.isfile(path):
+            pytest.skip(f"{filename} not yet created")
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        volume_names = {
+            v["name"] for v in data.get("spec", {}).get("volumes", [])
+        }
+        for container in data["spec"]["containers"]:
+            for mount in container.get("volumeMounts", []):
+                assert mount["name"] in volume_names, (
+                    f"{filename}: volumeMount '{mount['name']}' in container "
+                    f"'{container['name']}' has no matching volume definition"
+                )
+
+
+class TestBlockStorage:
+    """Only postgres should use block storage."""
+
+    def test_postgres_has_block_storage(self):
+        path = os.path.join(SPECS_DIR, "af_postgres.yaml")
+        if not os.path.isfile(path):
+            pytest.skip("af_postgres.yaml not yet created")
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        volumes = data.get("spec", {}).get("volumes", [])
+        block_volumes = [v for v in volumes if v.get("source") == "block"]
+        assert len(block_volumes) >= 1, (
+            "af_postgres.yaml: must have at least one block storage volume for data persistence"
+        )
+
+    @pytest.mark.parametrize("filename", [
+        "af_redis.yaml", "af_api_server.yaml", "af_scheduler.yaml",
+        "af_dag_processor.yaml", "af_triggerer.yaml", "af_workers.yaml",
+    ])
+    def test_non_postgres_no_block_storage(self, filename):
+        path = os.path.join(SPECS_DIR, filename)
+        if not os.path.isfile(path):
+            pytest.skip(f"{filename} not yet created")
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        volumes = data.get("spec", {}).get("volumes", [])
+        block_volumes = [v for v in volumes if v.get("source") == "block"]
+        assert len(block_volumes) == 0, (
+            f"{filename}: should NOT use block storage (only postgres needs it)"
+        )
+
+
+class TestRedisCommand:
+    """Redis spec must have a custom command for password auth."""
+
+    def test_redis_has_command(self):
+        path = os.path.join(SPECS_DIR, "af_redis.yaml")
+        if not os.path.isfile(path):
+            pytest.skip("af_redis.yaml not yet created")
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        containers = data["spec"]["containers"]
+        has_command = any("command" in c or "args" in c for c in containers)
+        assert has_command, (
+            "af_redis.yaml: Redis container must have command/args "
+            "to enable password authentication"
+        )
+
+    def test_redis_command_references_requirepass(self):
+        path = os.path.join(SPECS_DIR, "af_redis.yaml")
+        if not os.path.isfile(path):
+            pytest.skip("af_redis.yaml not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "requirepass" in content.lower(), (
+            "af_redis.yaml: Redis must configure --requirepass for auth"
+        )

@@ -1,0 +1,14 @@
+stages:
+  - test
+
+test:
+  stage: test
+  image: python:3.12-slim
+  before_script:
+    - pip install --no-cache-dir uv
+    - uv pip install --system --no-cache pytest pyyaml
+  script:
+    - pytest tests/ -v
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_BRANCH == "master"

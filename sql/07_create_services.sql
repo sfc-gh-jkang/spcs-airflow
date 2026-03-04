@@ -1,7 +1,7 @@
 -- 07_create_services.sql
 -- Creates all 7 SPCS services in dependency order.
 -- Order: postgres -> redis -> (api-server, scheduler, dag-processor, triggerer) -> workers
--- Idempotent: uses CREATE OR REPLACE (will restart services).
+-- Idempotent: uses CREATE SERVICE IF NOT EXISTS (skips existing services).
 -- NOTE: Run 01-06 first. Service specs must be uploaded to @SERVICE_SPEC stage.
 
 USE ROLE ACCOUNTADMIN;
