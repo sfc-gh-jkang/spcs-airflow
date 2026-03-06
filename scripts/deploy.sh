@@ -54,9 +54,10 @@ echo ""
 
 # Helper: check if Airflow services already exist
 services_exist() {
+    local result
+    result=$(${SNOW_CMD} --query "SHOW SERVICES LIKE 'AF_%' IN SCHEMA ${SF_QUALIFIED};" --format json 2>/dev/null || echo "[]")
     local count
-    count=$(${SNOW_CMD} --query "SELECT COUNT(*) AS cnt FROM (SHOW SERVICES LIKE 'AF_%' IN SCHEMA ${SF_QUALIFIED});" --format json 2>/dev/null \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['CNT'])" 2>/dev/null || echo "0")
+    count=$(echo "${result}" | python3 -c "import sys,json; data=json.load(sys.stdin); print(len(data))" 2>/dev/null || echo "0")
     [[ "${count}" -gt 0 ]]
 }
 
