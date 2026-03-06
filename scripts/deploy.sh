@@ -193,8 +193,43 @@ else
 fi
 echo ""
 
-# Step 5: Validate
+# Step 5: Wait for services to stabilize, then validate
 echo "--- Phase 5: Validation ---"
+
+ALL_SERVICES="AF_POSTGRES AF_REDIS AF_API_SERVER AF_SCHEDULER AF_DAG_PROCESSOR AF_TRIGGERER AF_WORKERS"
+MAX_WAIT=180   # seconds
+POLL_INTERVAL=10
+
+wait_for_services_ready() {
+    local elapsed=0
+    while [[ ${elapsed} -lt ${MAX_WAIT} ]]; do
+        local not_ready=()
+        for svc in ${ALL_SERVICES}; do
+            local status
+            status=$(${SNOW_CMD} --query "SELECT SYSTEM\$GET_SERVICE_STATUS('${SF_QUALIFIED}.${svc}');" --format json 2>/dev/null \
+                | python3 -c "import sys,json; data=json.load(sys.stdin); print(json.loads(data[0][list(data[0].keys())[0]])[0]['status'])" 2>/dev/null || echo "UNKNOWN")
+            if [[ "${status}" != "READY" ]]; then
+                not_ready+=("${svc}:${status}")
+            fi
+        done
+        if [[ ${#not_ready[@]} -eq 0 ]]; then
+            echo "==> All 7 services are READY."
+            return 0
+        fi
+        echo "==> [$(date +%H:%M:%S)] Waiting for services: ${not_ready[*]} (${elapsed}s/${MAX_WAIT}s)"
+        sleep ${POLL_INTERVAL}
+        elapsed=$((elapsed + POLL_INTERVAL))
+    done
+    echo "WARNING: Some services not READY after ${MAX_WAIT}s. Running validation anyway."
+    return 0
+}
+
+if ${UPDATE_MODE}; then
+    echo "==> Waiting for rolling restart to complete..."
+    wait_for_services_ready
+    echo ""
+fi
+
 run_sql_file "${SQL_DIR}/08_validate.sql" "Validate services"
 
 # Show endpoint URL and login instructions
