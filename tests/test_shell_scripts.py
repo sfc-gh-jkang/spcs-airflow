@@ -183,6 +183,54 @@ class TestDeploy:
         assert "*.yaml" in content, "deploy.sh: must upload *.yaml specs"
         assert "*.py" in content, "deploy.sh: must upload *.py DAGs"
 
+    def test_supports_update_flag(self):
+        """deploy.sh must support --update flag for ALTER SERVICE updates."""
+        path = os.path.join(SCRIPTS_DIR, "deploy.sh")
+        if not os.path.isfile(path):
+            pytest.skip("deploy.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "--update" in content, (
+            "deploy.sh: must support --update flag for ALTER SERVICE updates"
+        )
+
+    def test_update_mode_uses_alter_sql(self):
+        """deploy.sh --update must reference 07b_update_services.sql."""
+        path = os.path.join(SCRIPTS_DIR, "deploy.sh")
+        if not os.path.isfile(path):
+            pytest.skip("deploy.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "07b_update_services.sql" in content, (
+            "deploy.sh: --update mode must reference 07b_update_services.sql"
+        )
+
+    def test_warns_when_services_exist(self):
+        """deploy.sh must warn users if services already exist (without --update)."""
+        path = os.path.join(SCRIPTS_DIR, "deploy.sh")
+        if not os.path.isfile(path):
+            pytest.skip("deploy.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "services_exist" in content or "SERVICES_EXIST" in content, (
+            "deploy.sh: must check if services already exist and warn users"
+        )
+
+    def test_update_mode_skips_infra_setup(self):
+        """deploy.sh --update must skip Phase 1 (SQL 01-06)."""
+        path = os.path.join(SCRIPTS_DIR, "deploy.sh")
+        if not os.path.isfile(path):
+            pytest.skip("deploy.sh not yet created")
+        with open(path) as f:
+            content = f.read()
+        # In update mode, Phase 1 should be skipped
+        assert "UPDATE_MODE" in content or "update_mode" in content, (
+            "deploy.sh: must have an update mode variable to branch logic"
+        )
+        assert "Skipped" in content or "skipped" in content or "SKIPPED" in content, (
+            "deploy.sh: --update mode must skip Phase 1 (infra setup)"
+        )
+
 
 class TestSyncDags:
     """sync_dags.sh must handle DAG uploads to the AIRFLOW_DAGS stage."""

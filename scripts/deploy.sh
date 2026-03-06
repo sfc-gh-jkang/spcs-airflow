@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # deploy.sh - Deploy the full Airflow stack to SPCS.
-# Runs SQL scripts 01-07 in order, uploads specs and DAGs, then validates.
-# Usage: ./scripts/deploy.sh [--connection <name>]
+#
+# Usage:
+#   ./scripts/deploy.sh [--connection <name>]            # First-time deploy (CREATE)
+#   ./scripts/deploy.sh [--connection <name>] --update    # Update existing stack (ALTER)
+#
+# Options:
 #   --connection: Snowflake connection name (default: snowflake)
+#   --update:     Update existing services via ALTER SERVICE (preserves URLs)
+#
+# First-time deploy: runs SQL 01-07, uploads specs/DAGs, validates.
+# Update deploy:     uploads specs/DAGs, runs ALTER SERVICE on all 7 services.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,9 +20,11 @@ SPEC_DIR="${PROJECT_DIR}/specs"
 DAGS_DIR="${PROJECT_DIR}/dags"
 
 CONNECTION="snowflake"
+UPDATE_MODE=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --connection) CONNECTION="$2"; shift 2 ;;
+        --update) UPDATE_MODE=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -38,30 +48,72 @@ run_sql_file() {
 echo "============================================="
 echo "  Airflow SPCS Deployment"
 echo "  Connection: ${CONNECTION}"
+echo "  Mode:       $(if ${UPDATE_MODE}; then echo 'UPDATE (ALTER SERVICE)'; else echo 'CREATE (first-time)'; fi)"
 echo "============================================="
 echo ""
 
-# Pre-flight: ensure secrets have been generated
-if [[ ! -f "${SQL_DIR}/03_setup_secrets.sql" ]]; then
-    echo "ERROR: sql/03_setup_secrets.sql not found."
-    echo "  Generate it first:  bash scripts/generate_secrets.sh"
-    exit 1
-fi
-if grep -q 'CHANGE_ME' "${SQL_DIR}/03_setup_secrets.sql" 2>/dev/null; then
-    echo "ERROR: sql/03_setup_secrets.sql still has placeholder values."
-    echo "  Generate real secrets:  bash scripts/generate_secrets.sh"
-    exit 1
+# Helper: check if Airflow services already exist
+services_exist() {
+    local count
+    count=$(${SNOW_CMD} --query "SELECT COUNT(*) AS cnt FROM (SHOW SERVICES LIKE 'AF_%' IN SCHEMA ${SF_QUALIFIED});" --format json 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['CNT'])" 2>/dev/null || echo "0")
+    [[ "${count}" -gt 0 ]]
+}
+
+if ${UPDATE_MODE}; then
+    # --update mode: verify services exist before attempting ALTER
+    if ! services_exist; then
+        echo "ERROR: No existing Airflow services found in ${SF_QUALIFIED}."
+        echo "  Run a first-time deploy first (without --update):"
+        echo "    ./scripts/deploy.sh --connection ${CONNECTION}"
+        exit 1
+    fi
+else
+    # First-time mode: warn if services already exist
+    if services_exist; then
+        echo "WARNING: Airflow services already exist in ${SF_QUALIFIED}."
+        echo "  Running CREATE again is safe (IF NOT EXISTS), but to update"
+        echo "  services without changing the ingress URL, use --update:"
+        echo ""
+        echo "    ./scripts/deploy.sh --connection ${CONNECTION} --update"
+        echo ""
+        read -rp "  Continue with first-time deploy anyway? [y/N]: " CONFIRM
+        if [[ "${CONFIRM}" != "y" && "${CONFIRM}" != "Y" ]]; then
+            echo "Aborted. Use --update to update existing services."
+            exit 0
+        fi
+        echo ""
+    fi
 fi
 
-# Step 1: Run setup SQL scripts (01-06)
-echo "--- Phase 1: Snowflake Object Setup ---"
-run_sql_file "${SQL_DIR}/01_setup_database.sql"    "Database & schema"
-run_sql_file "${SQL_DIR}/02_setup_stages.sql"       "Stages"
-run_sql_file "${SQL_DIR}/03_setup_secrets.sql"      "Secrets"
-run_sql_file "${SQL_DIR}/04_setup_networking.sql"   "Network rules"
-run_sql_file "${SQL_DIR}/05_setup_compute_pools.sql" "Compute pools"
-run_sql_file "${SQL_DIR}/06_setup_image_repo.sql"   "Image repository"
-echo ""
+# Pre-flight: ensure secrets have been generated (skip in update mode)
+if ! ${UPDATE_MODE}; then
+    if [[ ! -f "${SQL_DIR}/03_setup_secrets.sql" ]]; then
+        echo "ERROR: sql/03_setup_secrets.sql not found."
+        echo "  Generate it first:  bash scripts/generate_secrets.sh"
+        exit 1
+    fi
+    if grep -q 'CHANGE_ME' "${SQL_DIR}/03_setup_secrets.sql" 2>/dev/null; then
+        echo "ERROR: sql/03_setup_secrets.sql still has placeholder values."
+        echo "  Generate real secrets:  bash scripts/generate_secrets.sh"
+        exit 1
+    fi
+fi
+
+# Step 1: Run setup SQL scripts (01-06) — first-time only
+if ${UPDATE_MODE}; then
+    echo "--- Phase 1: Skipped (--update mode, infra already exists) ---"
+    echo ""
+else
+    echo "--- Phase 1: Snowflake Object Setup ---"
+    run_sql_file "${SQL_DIR}/01_setup_database.sql"    "Database & schema"
+    run_sql_file "${SQL_DIR}/02_setup_stages.sql"       "Stages"
+    run_sql_file "${SQL_DIR}/03_setup_secrets.sql"      "Secrets"
+    run_sql_file "${SQL_DIR}/04_setup_networking.sql"   "Network rules"
+    run_sql_file "${SQL_DIR}/05_setup_compute_pools.sql" "Compute pools"
+    run_sql_file "${SQL_DIR}/06_setup_image_repo.sql"   "Image repository"
+    echo ""
+fi
 
 # Step 2: Upload service specs to stage
 echo "--- Phase 2: Upload Service Specs ---"
@@ -96,41 +148,48 @@ done
 shopt -u nullglob
 echo ""
 
-# Step 4: Create services
+# Step 4: Create or update services
 # NOTE: Docker images must be built and pushed BEFORE this step.
 #   Run: ./scripts/build_and_push.sh --connection <name>
-echo "--- Phase 4: Create Services ---"
-echo "==> Checking for required Docker images..."
-IMAGE_LIST=$(${SNOW_CMD} --query "CALL SYSTEM\$REGISTRY_LIST_IMAGES('/${SF_DATABASE}/${SF_SCHEMA}/${SF_REPO}');" 2>&1 || true)
-
-# SYSTEM$REGISTRY_LIST_IMAGES can return 401 on some cloud providers (known GCP issue).
-# If the call failed, warn and proceed — service creation will fail fast if images are missing.
-if echo "${IMAGE_LIST}" | grep -qi "error\|unauthorized\|failed"; then
-    echo "==> WARNING: Could not query image registry (this is normal on some cloud providers)."
-    echo "    Proceeding to service creation. If images are missing, services will fail to start."
+if ${UPDATE_MODE}; then
+    echo "--- Phase 4: Update Services (ALTER SERVICE) ---"
+    echo "==> Rolling upgrade — ingress URL will NOT change."
     echo ""
+    run_sql_file "${SQL_DIR}/07b_update_services.sql" "ALTER all 7 services"
 else
-    MISSING_IMAGES=()
-    for IMG in airflow airflow-postgres airflow-redis; do
-        if ! echo "${IMAGE_LIST}" | grep -qi "${IMG}"; then
-            MISSING_IMAGES+=("${IMG}")
-        fi
-    done
-    if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
+    echo "--- Phase 4: Create Services ---"
+    echo "==> Checking for required Docker images..."
+    IMAGE_LIST=$(${SNOW_CMD} --query "CALL SYSTEM\$REGISTRY_LIST_IMAGES('/${SF_DATABASE}/${SF_SCHEMA}/${SF_REPO}');" 2>&1 || true)
+
+    # SYSTEM$REGISTRY_LIST_IMAGES can return 401 on some cloud providers (known GCP issue).
+    # If the call failed, warn and proceed — service creation will fail fast if images are missing.
+    if echo "${IMAGE_LIST}" | grep -qi "error\|unauthorized\|failed"; then
+        echo "==> WARNING: Could not query image registry (this is normal on some cloud providers)."
+        echo "    Proceeding to service creation. If images are missing, services will fail to start."
         echo ""
-        echo "ERROR: Required Docker images not found in repository:"
-        for IMG in "${MISSING_IMAGES[@]}"; do
-            echo "  - ${IMG}"
+    else
+        MISSING_IMAGES=()
+        for IMG in airflow airflow-postgres airflow-redis; do
+            if ! echo "${IMAGE_LIST}" | grep -qi "${IMG}"; then
+                MISSING_IMAGES+=("${IMG}")
+            fi
         done
+        if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
+            echo ""
+            echo "ERROR: Required Docker images not found in repository:"
+            for IMG in "${MISSING_IMAGES[@]}"; do
+                echo "  - ${IMG}"
+            done
+            echo ""
+            echo "  Build and push images first:"
+            echo "    bash scripts/build_and_push.sh --connection ${CONNECTION}"
+            exit 1
+        fi
+        echo "==> All required images found."
         echo ""
-        echo "  Build and push images first:"
-        echo "    bash scripts/build_and_push.sh --connection ${CONNECTION}"
-        exit 1
     fi
-    echo "==> All required images found."
-    echo ""
+    run_sql_file "${SQL_DIR}/07_create_services.sql" "Create all 7 services"
 fi
-run_sql_file "${SQL_DIR}/07_create_services.sql" "Create all 7 services"
 echo ""
 
 # Step 5: Validate

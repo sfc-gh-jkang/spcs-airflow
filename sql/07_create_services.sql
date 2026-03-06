@@ -1,7 +1,18 @@
 -- 07_create_services.sql
+-- =====================================================================
+-- FIRST-TIME DEPLOYMENT ONLY
+-- =====================================================================
 -- Creates all 7 SPCS services in dependency order.
 -- Order: postgres -> redis -> (api-server, scheduler, dag-processor, triggerer) -> workers
 -- Idempotent: uses CREATE SERVICE IF NOT EXISTS (skips existing services).
+--
+-- To UPDATE existing services (new image, config change), use:
+--   sql/07b_update_services.sql   (ALTER SERVICE — rolling upgrade)
+--   ./scripts/deploy.sh --update  (automated)
+--
+-- WARNING: Do NOT use CREATE OR REPLACE SERVICE — that generates a NEW
+-- ingress URL and breaks bookmarks/integrations.
+-- =====================================================================
 -- NOTE: Run 01-06 first. Service specs must be uploaded to @SERVICE_SPEC stage.
 
 USE ROLE ACCOUNTADMIN;

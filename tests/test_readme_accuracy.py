@@ -77,6 +77,7 @@ class TestReadmeFileReferences:
         "dags/example_taskflow.py",
         "dags/e2e_snowflake_objects.py",
         "sql/07_create_services.sql",
+        "sql/07b_update_services.sql",
         "sql/09_suspend_all.sql",
         "sql/10_resume_all.sql",
         "docker-compose.yaml",
@@ -177,4 +178,16 @@ class TestReadmeContent:
     def test_mentions_execute_job_service(self, readme_content):
         assert "EXECUTE JOB SERVICE" in readme_content, (
             "README.md: must mention EXECUTE JOB SERVICE for E2E testing"
+        )
+
+    def test_documents_update_flag(self, readme_content):
+        """README must document the --update flag for preserving ingress URLs."""
+        assert "--update" in readme_content, (
+            "README.md: must document the --update flag for deploy.sh"
+        )
+
+    def test_documents_alter_service(self, readme_content):
+        """README must mention ALTER SERVICE as the update mechanism."""
+        assert "ALTER SERVICE" in readme_content, (
+            "README.md: must mention ALTER SERVICE for updating existing services"
         )

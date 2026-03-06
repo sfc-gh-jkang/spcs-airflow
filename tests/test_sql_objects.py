@@ -21,6 +21,7 @@ EXPECTED_SQL_FILES = [
     "05_setup_compute_pools.sql",
     "06_setup_image_repo.sql",
     "07_create_services.sql",
+    "07b_update_services.sql",
     "08_validate.sql",
     "09_suspend_all.sql",
     "10_resume_all.sql",
@@ -28,7 +29,7 @@ EXPECTED_SQL_FILES = [
 
 
 class TestSqlFilesExist:
-    """All 10 SQL setup scripts must exist."""
+    """All SQL setup scripts must exist."""
 
     @pytest.mark.parametrize("filename", EXPECTED_SQL_FILES)
     def test_sql_file_exists(self, filename):
@@ -241,4 +242,85 @@ class TestSecretsTemplate:
             content = f.read().upper()
         assert secret in content, (
             f"03_setup_secrets.sql.template: must define secret {secret}"
+        )
+
+
+class TestServiceUpdate:
+    """07b_update_services.sql must ALTER SERVICE for all 7 services."""
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_alters_service(self, service):
+        path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert service in content, (
+            f"07b_update_services.sql: must ALTER service {service}"
+        )
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_uses_alter_not_create(self, service):
+        """07b must use ALTER SERVICE, never CREATE SERVICE."""
+        path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        assert "CREATE SERVICE" not in content, (
+            "07b_update_services.sql: must NOT use CREATE SERVICE "
+            "(use ALTER SERVICE to preserve ingress URLs)"
+        )
+        assert "ALTER SERVICE" in content, (
+            "07b_update_services.sql: must use ALTER SERVICE"
+        )
+
+    def test_references_spec_stage(self):
+        """07b must load specs from @SERVICE_SPEC stage."""
+        path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(path) as f:
+            content = f.read()
+        assert "@SERVICE_SPEC" in content, (
+            "07b_update_services.sql: must reference @SERVICE_SPEC stage"
+        )
+
+    def test_create_and_update_cover_same_services(self):
+        """07_create and 07b_update must cover the exact same set of services."""
+        create_path = os.path.join(SQL_DIR, "07_create_services.sql")
+        update_path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(create_path) or not os.path.isfile(update_path):
+            pytest.skip("Both 07 and 07b must exist")
+        with open(create_path) as f:
+            create_content = f.read().upper()
+        with open(update_path) as f:
+            update_content = f.read().upper()
+        for service in ALL_SERVICES:
+            in_create = service in create_content
+            in_update = service in update_content
+            assert in_create and in_update, (
+                f"Service {service} must appear in both 07_create and 07b_update "
+                f"(create={in_create}, update={in_update})"
+            )
+
+    def test_update_spec_files_match_create(self):
+        """SPECIFICATION_FILE refs in 07b must match those in 07."""
+        create_path = os.path.join(SQL_DIR, "07_create_services.sql")
+        update_path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(create_path) or not os.path.isfile(update_path):
+            pytest.skip("Both 07 and 07b must exist")
+        with open(create_path) as f:
+            create_content = f.read()
+        with open(update_path) as f:
+            update_content = f.read()
+        create_refs = set(re.findall(
+            r"SPECIFICATION_FILE\s*=\s*'([^']+)'", create_content, re.IGNORECASE
+        ))
+        update_refs = set(re.findall(
+            r"SPECIFICATION_FILE\s*=\s*'([^']+)'", update_content, re.IGNORECASE
+        ))
+        assert create_refs == update_refs, (
+            f"07_create and 07b_update must reference the same spec files. "
+            f"Create: {create_refs}, Update: {update_refs}"
         )

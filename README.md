@@ -94,6 +94,27 @@ bash scripts/deploy.sh --connection <connection>
 
 `deploy.sh` is idempotent: re-running it after images are pushed will skip through the already-created objects and proceed to service creation.
 
+### Updating Existing Services
+
+After the initial deployment, use `--update` to update services via `ALTER SERVICE`. This performs a rolling upgrade and **preserves the ingress URL** (no URL change).
+
+```bash
+# Update specs, DAGs, and ALTER SERVICE all 7 services (URL stays the same)
+bash scripts/deploy.sh --connection <connection> --update
+```
+
+The `--update` flag:
+- Skips infrastructure setup (SQL 01-06 — already exists)
+- Uploads updated spec files and DAGs to stage
+- Runs `ALTER SERVICE` on all 7 services (`sql/07b_update_services.sql`)
+- Validates and prints the same stable endpoint URL
+
+**Safety nets:**
+- If you run `deploy.sh` without `--update` and services already exist, it warns you and suggests `--update`
+- If you run `deploy.sh --update` but no services exist, it errors with instructions to do a first-time deploy
+
+> **Do NOT use `CREATE OR REPLACE SERVICE`** — this drops and recreates the service, generating a new ingress URL and breaking any bookmarks or integrations.
+
 ### 5. Access the Airflow UI
 
 ```sql
@@ -148,7 +169,8 @@ airflow-spcs-v3/
 │   ├── 04_setup_networking.sql
 │   ├── 05_setup_compute_pools.sql
 │   ├── 06_setup_image_repo.sql
-│   ├── 07_create_services.sql
+│   ├── 07_create_services.sql         # First-time only (CREATE SERVICE IF NOT EXISTS)
+│   ├── 07b_update_services.sql        # Updates only (ALTER SERVICE — preserves URLs)
 │   ├── 08_validate.sql
 │   ├── 09_suspend_all.sql
 │   └── 10_resume_all.sql
@@ -291,10 +313,10 @@ snow sql --connection <connection> -q \
 | Change | Action Required |
 |--------|----------------|
 | New/modified DAG file | `sync_dags.sh` only (no restart) |
-| New Python dependency | Rebuild Docker image + `build_and_push.sh` + recreate services |
-| Airflow config change (env var) | Update spec YAML + recreate affected service(s) |
-| Spec YAML change (resources, volumes) | Re-upload spec + `ALTER SERVICE ... FROM SPECIFICATION` or recreate |
-| New Snowflake secret | Run secret SQL + recreate services that reference it |
+| New Python dependency | Rebuild Docker image + `build_and_push.sh` + `deploy.sh --update` |
+| Airflow config change (env var) | Update spec YAML + `deploy.sh --update` |
+| Spec YAML change (resources, volumes) | `deploy.sh --update` (ALTER SERVICE, preserves URL) |
+| New Snowflake secret | Run secret SQL + `deploy.sh --update` |
 
 ### Removing a DAG
 

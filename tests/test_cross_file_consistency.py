@@ -27,7 +27,7 @@ ALL_SERVICES = [
 
 
 class TestSpecFilenameConsistency:
-    """07_create_services.sql SPECIFICATION_FILE refs must match actual specs."""
+    """07_create_services.sql and 07b_update_services.sql SPECIFICATION_FILE refs must match actual specs."""
 
     def test_sql_spec_refs_match_files(self):
         sql_path = os.path.join(SQL_DIR, "07_create_services.sql")
@@ -68,6 +68,43 @@ class TestSpecFilenameConsistency:
                 f"specs/{spec_file} exists but is not referenced in 07_create_services.sql"
             )
 
+    def test_update_sql_spec_refs_match_files(self):
+        """07b_update_services.sql SPECIFICATION_FILE refs must match actual spec files."""
+        sql_path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(sql_path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(sql_path) as f:
+            sql_content = f.read()
+
+        actual_specs = {
+            f for f in os.listdir(SPECS_DIR)
+            if f.endswith(".yaml")
+        }
+
+        refs = re.findall(r"SPECIFICATION_FILE\s*=\s*'([^']+)'", sql_content, re.IGNORECASE)
+        for ref in refs:
+            assert ref in actual_specs, (
+                f"07b_update_services.sql references '{ref}' but file not in specs/"
+            )
+
+    def test_all_specs_referenced_in_update_sql(self):
+        """Every spec file must be referenced in 07b_update_services.sql."""
+        sql_path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(sql_path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(sql_path) as f:
+            sql_content = f.read()
+
+        actual_specs = {
+            f for f in os.listdir(SPECS_DIR)
+            if f.endswith(".yaml")
+        }
+
+        for spec_file in actual_specs:
+            assert spec_file in sql_content, (
+                f"specs/{spec_file} exists but is not referenced in 07b_update_services.sql"
+            )
+
 
 class TestServiceCoverage:
     """Suspend, resume, and validate SQL must cover all 7 services."""
@@ -96,6 +133,17 @@ class TestServiceCoverage:
         for service in ALL_SERVICES:
             assert service in content, (
                 f"07_create_services.sql: must create service {service}"
+            )
+
+    def test_update_services_covers_all(self):
+        path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        for service in ALL_SERVICES:
+            assert service in content, (
+                f"07b_update_services.sql: must update service {service}"
             )
 
 
