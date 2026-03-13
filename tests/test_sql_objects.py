@@ -118,6 +118,9 @@ class TestSqlObjectNames:
         "AIRFLOW_DB": ["01_setup_database.sql"],
         "AIRFLOW_SCHEMA": ["01_setup_database.sql"],
         "AIRFLOW_REPOSITORY": ["06_setup_image_repo.sql"],
+        "AIRFLOW_EGRESS_RULE": ["04_setup_networking.sql"],
+        "AIRFLOW_SNOWFLAKE_EGRESS_RULE": ["04_setup_networking.sql"],
+        "AIRFLOW_EXTERNAL_ACCESS": ["04_setup_networking.sql"],
     }
 
     @pytest.mark.parametrize(

@@ -174,7 +174,7 @@ airflow-spcs-v3/
 │   ├── 08_validate.sql
 │   ├── 09_suspend_all.sql
 │   └── 10_resume_all.sql
-├── tests/                      # TDD test suite — 542 tests (531 offline + 5 local + 6 E2E)
+├── tests/                      # TDD test suite — 571+ tests (offline + 5 local + 6 E2E)
 │   ├── conftest.py             # Shared fixtures and pytest markers
 │   ├── test_spec_schemas.py    # SPCS spec structure validation
 │   ├── test_service_connectivity.py  # Inter-service dependency checks
@@ -246,6 +246,52 @@ All Airflow services share these critical environment variables:
 11. **`SYSTEM$REGISTRY_LIST_IMAGES` on GCP**: Returns `401 Unauthorized` on GCP accounts (platform bug). Use error handling or skip the image check on GCP.
 12. **`DROP SERVICE` with block storage**: Services using `blockStorage` volumes require `DROP SERVICE ... FORCE` or `snapshotOnDelete=true` in the spec.
 13. **Log symlinks crash on GCP stage mounts**: Airflow tries to symlink "latest" log directories. GCP stage mounts reject symlinks (`Errno 95`). Set `AIRFLOW__SCHEDULER__SYMLINK_LATEST_LOG=False` on all services, and don't mount the logs stage on the dag_processor (it only needs dags).
+14. **Airflow 3.x connection validation on save**: Airflow 3.x eagerly tests connections when you click Save in the UI. If the API server lacks outbound egress (EAI), this produces a 500 error after ~15 seconds. This did NOT happen in Airflow 2.x (which saved without testing). Ensure `AF_API_SERVER` has the EAI attached.
+
+## Networking & External Access
+
+SPCS blocks all outbound traffic by default. The deployment creates two network rules and an External Access Integration (EAI) to enable outbound connectivity:
+
+| Network Rule | Purpose | Hosts |
+|-------------|---------|-------|
+| `AIRFLOW_EGRESS_RULE` | Package registries for pip/Docker | pypi.org, github.com, Docker Hub |
+| `AIRFLOW_SNOWFLAKE_EGRESS_RULE` | Worker/API server outbound access | `0.0.0.0:443`, `0.0.0.0:80` (all HTTPS/HTTP) |
+
+The EAI (`AIRFLOW_EXTERNAL_ACCESS`) is attached to two services:
+
+| Service | Why it needs EAI |
+|---------|-----------------|
+| `AF_API_SERVER` | Validates connections on save (Airflow 3.x tests connectivity eagerly) |
+| `AF_WORKERS` | Executes DAG tasks that call `snowflake.connector`, external APIs, dbt Cloud, etc. |
+
+Infrastructure services (postgres, redis, scheduler, dag-processor, triggerer) only use intra-SPCS DNS and do not need outbound access.
+
+### Restricting egress (production hardening)
+
+The default `AIRFLOW_SNOWFLAKE_EGRESS_RULE` allows all outbound HTTPS/HTTP. For production, replace `0.0.0.0` with specific hosts:
+
+```sql
+CREATE OR REPLACE NETWORK RULE AIRFLOW_SNOWFLAKE_EGRESS_RULE
+    MODE = EGRESS
+    TYPE = HOST_PORT
+    VALUE_LIST = (
+        '<orgname>-<accountname>.snowflakecomputing.com',
+        'cloud.getdbt.com'  -- if using dbt Cloud
+    );
+```
+
+### Adding custom egress rules
+
+To allow workers to reach additional endpoints (SFTP servers, external APIs, etc.), either add hosts to `AIRFLOW_SNOWFLAKE_EGRESS_RULE` or create additional network rules and add them to the EAI:
+
+```sql
+ALTER EXTERNAL ACCESS INTEGRATION AIRFLOW_EXTERNAL_ACCESS
+  SET ALLOWED_NETWORK_RULES = (
+    AIRFLOW_EGRESS_RULE,
+    AIRFLOW_SNOWFLAKE_EGRESS_RULE,
+    MY_CUSTOM_RULE
+  );
+```
 
 ## Snowflake Connection (SPCS OAuth + Local)
 
@@ -404,13 +450,13 @@ SHOW ENDPOINTS IN SERVICE AIRFLOW_DB.AIRFLOW_SCHEMA.AF_API_SERVER;
 
 Three test tiers, from fastest to most comprehensive:
 
-### Offline Tests (531 tests, ~8s)
+### Offline Tests (~8s)
 
 Static validation of every artifact — no Docker, no network, no SPCS required:
 
 ```bash
 pytest tests/ -v
-# 530 passed, 1 skipped
+# 571 passed, 1 skipped
 ```
 
 A bare `pytest` (no flags) runs only offline tests — `pytest.ini` excludes `e2e` and `local` markers by default.

@@ -192,6 +192,87 @@ class TestComputePoolAssignments:
         )
 
 
+class TestExternalAccessIntegration:
+    """Services that need outbound network access must have EXTERNAL_ACCESS_INTEGRATIONS."""
+
+    # Services that execute DAG tasks or validate connections need egress.
+    # Workers: execute DAG tasks that call snowflake.connector, external APIs, etc.
+    # API Server: validates connections on save (Airflow 3.x behavior).
+    SERVICES_WITH_EAI = ["AF_API_SERVER", "AF_WORKERS"]
+
+    # Infrastructure services only use intra-SPCS DNS — no egress needed.
+    SERVICES_WITHOUT_EAI = ["AF_POSTGRES", "AF_REDIS"]
+
+    @pytest.mark.parametrize("service", SERVICES_WITH_EAI)
+    def test_service_has_eai(self, service):
+        """Services needing outbound access must have EXTERNAL_ACCESS_INTEGRATIONS."""
+        path = os.path.join(SQL_DIR, "07_create_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07_create_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        service_pattern = rf'CREATE\s+SERVICE.*?{service}.*?(?=CREATE\s+SERVICE|$)'
+        match = re.search(service_pattern, content, re.DOTALL)
+        assert match is not None, (
+            f"07_create_services.sql: could not find CREATE SERVICE for {service}"
+        )
+        assert "EXTERNAL_ACCESS_INTEGRATIONS" in match.group(), (
+            f"07_create_services.sql: {service} must have EXTERNAL_ACCESS_INTEGRATIONS "
+            f"for outbound network access (Snowflake connector, external APIs)"
+        )
+
+    @pytest.mark.parametrize("service", SERVICES_WITHOUT_EAI)
+    def test_infra_service_no_eai(self, service):
+        """Infrastructure services (postgres, redis) should not have EAI."""
+        path = os.path.join(SQL_DIR, "07_create_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07_create_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        service_pattern = rf'CREATE\s+SERVICE.*?{service}.*?(?=CREATE\s+SERVICE|$)'
+        match = re.search(service_pattern, content, re.DOTALL)
+        assert match is not None, (
+            f"07_create_services.sql: could not find CREATE SERVICE for {service}"
+        )
+        assert "EXTERNAL_ACCESS_INTEGRATIONS" not in match.group(), (
+            f"07_create_services.sql: {service} should NOT have "
+            f"EXTERNAL_ACCESS_INTEGRATIONS (infra-only, no outbound calls)"
+        )
+
+    @pytest.mark.parametrize("service", SERVICES_WITH_EAI)
+    def test_eai_name_is_correct(self, service):
+        """EAI references must use AIRFLOW_EXTERNAL_ACCESS."""
+        path = os.path.join(SQL_DIR, "07_create_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07_create_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        service_pattern = rf'CREATE\s+SERVICE.*?{service}.*?(?=CREATE\s+SERVICE|$)'
+        match = re.search(service_pattern, content, re.DOTALL)
+        assert match is not None
+        assert "AIRFLOW_EXTERNAL_ACCESS" in match.group(), (
+            f"07_create_services.sql: {service} EAI must reference AIRFLOW_EXTERNAL_ACCESS"
+        )
+
+    @pytest.mark.parametrize("service", SERVICES_WITH_EAI)
+    def test_update_sql_has_eai(self, service):
+        """07b_update_services.sql must also set EAI on services that need it."""
+        path = os.path.join(SQL_DIR, "07b_update_services.sql")
+        if not os.path.isfile(path):
+            pytest.skip("07b_update_services.sql not yet created")
+        with open(path) as f:
+            content = f.read().upper()
+        service_pattern = rf'ALTER\s+SERVICE\s+{service}.*?(?=ALTER\s+SERVICE|$)'
+        match = re.search(service_pattern, content, re.DOTALL)
+        assert match is not None, (
+            f"07b_update_services.sql: could not find ALTER SERVICE for {service}"
+        )
+        assert "EXTERNAL_ACCESS_INTEGRATIONS" in match.group(), (
+            f"07b_update_services.sql: {service} must have EXTERNAL_ACCESS_INTEGRATIONS "
+            f"to ensure EAI is preserved during updates"
+        )
+
+
 class TestVersionConsistency:
     """Version numbers must be consistent across all files."""
 
