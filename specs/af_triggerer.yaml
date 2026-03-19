@@ -6,7 +6,6 @@ spec:
         AIRFLOW_ROLE: triggerer
         AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://airflow:{{secret.airflow_postgres_pwd.secret_string}}@af-postgres:5432/airflow"
         AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-        AIRFLOW__CORE__FERNET_KEY: "{{secret.airflow_fernet_key.secret_string}}"
         AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
         AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
         AIRFLOW__SCHEDULER__SYMLINK_LATEST_LOG: "False"
@@ -17,6 +16,8 @@ spec:
       secrets:
         - snowflakeSecret:
             objectName: airflow_fernet_key
+          secretKeyRef: secret_string
+          envVarName: AIRFLOW__CORE__FERNET_KEY
         - snowflakeSecret:
             objectName: airflow_postgres_pwd
         - snowflakeSecret:
