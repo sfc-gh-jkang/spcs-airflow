@@ -494,3 +494,10 @@ pytest tests/test_e2e_spcs.py -m e2e -v
 ```
 
 E2E tests are excluded from normal `pytest` runs. They use `EXECUTE JOB SERVICE` on `WORKER_POOL` to run Airflow CLI commands inside one-shot containers connected to the shared metadata database.
+
+## Repository Owner
+
+- **Owner:** John Kang (john.kang@snowflake.com / [@sfc-gh-jkang](https://github.com/sfc-gh-jkang))
+- **Access requests:** Open a [CASEC Jira](https://snowflakecomputing.atlassian.net/) for access changes
+- **License:** Apache-2.0
+
